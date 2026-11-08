@@ -1,0 +1,75 @@
+# Bye Bye Cloud Photos — example configuration
+#
+# Copy to `bbcp.toml` and edit. Relative paths resolve against the folder that
+# contains this file, so keeping the config next to the album is convenient.
+#
+# `bbcp init --album /path/to/Album` writes a minimal version of this file.
+
+album = "/srv/photos/Album"
+
+# Takeout JSON sidecars are archived here before an external root is purged.
+metadata_archive = ".bbcp/metadata-archive"
+
+[paths]
+# Keep the database on a local filesystem (ext4, xfs, apfs). Never on a 9p,
+# NFS or FUSE mount: SQLite becomes unusably slow and locking is unreliable.
+db = ".bbcp/bbcp.db"
+quarantine = ".bbcp/quarantine"
+staging = ".bbcp/staging"
+logs = ".bbcp/logs"
+manifests = ".bbcp/manifests"
+
+# Exactly one root must have kind = "album". It is protected: the tool never
+# purges it, only quarantines duplicates and replaces copies with upgrades.
+[[roots]]
+label = "album"
+path = "/srv/photos/Album"
+kind = "album"
+
+# One entry per Google Takeout export, old dump, staging folder or recycle bin.
+# `kind = "source"` means the tool may propose an import or, only with an
+# explicit `--only`, a purge.
+[[roots]]
+label = "takeout-2026"
+path = "/srv/photos/Takeout/Takeout/Google Fotos"
+kind = "source"
+
+# Local digiKam trash: treat it as a source and inspect it before emptying.
+# [[roots]]
+# label = "album-dtrash"
+# path = "/srv/photos/Album/.dtrash/files"
+# kind = "source"
+
+[rules]
+# Reject perceptual hashes with fewer set bits. Flat or black images produce
+# degenerate hashes that collide with everything.
+min_popcount = 12
+
+# Maximum max_aspect/min_aspect ratio inside an exact group.
+aspect_tolerance = 1.05
+
+# Mean absolute difference (0-255) of 64x64 grayscale thumbnails. Above this
+# the two files are treated as different content and kept.
+mad_threshold = 1.5
+
+# A same-resolution copy must be this much bigger (or have this much higher
+# bitrate) to replace the current copy.
+material_upgrade_ratio = 1.25
+
+# pHash + dHash distance that still counts as the same video frame.
+frame_distance = 16
+
+# Allowed duration difference (seconds) when pairing re-encoded videos.
+duration_tolerance = 0.5
+
+# Sentinel values that mean "date unknown".
+ignore_dates = ["1970-01-01", "1980-01-01"]
+
+# Folder names (typically YYYY-MM-DD) that are bulk imports and must not be
+# used as capture dates. Example: a Takeout exported on 2026-01-05 whose
+# photos all landed in "2026/2026-01-05".
+import_dump_days = []
+
+[google]
+# Items per google_batches/batch_NNN.tsv file.
+batch_size = 1000
