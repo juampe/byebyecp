@@ -144,11 +144,6 @@ impl Journal {
 }
 
 pub fn apply(store: &mut Store, cfg: &Config, opts: &ApplyOptions) -> Result<ApplyStats> {
-    // Destructive work is refused without two independent backups. A dry run
-    // only prints numbers, so it stays available for planning.
-    if opts.execute {
-        crate::safety::require_backups(cfg)?;
-    }
     let plan = store.plan()?;
     let album_dir = cfg.album.clone();
     let album_label = cfg

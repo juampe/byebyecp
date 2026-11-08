@@ -28,7 +28,6 @@ pub mod model;
 pub mod plan;
 pub mod quality;
 pub mod report;
-pub mod safety;
 pub mod stage;
 pub mod store;
 pub mod verify;
@@ -51,8 +50,6 @@ pub struct DoctorReport {
     pub album_writable: bool,
     pub free_bytes: Option<u64>,
     pub roots_ok: Vec<(String, bool, usize)>,
-    /// Backup precondition for destructive runs.
-    pub backups: safety::BackupReport,
 }
 
 pub fn doctor(cfg: &Config) -> Result<DoctorReport> {
@@ -60,7 +57,6 @@ pub fn doctor(cfg: &Config) -> Result<DoctorReport> {
         ffmpeg: imagehash::ffmpeg_available(),
         ffprobe: video::ffprobe_available(),
         sqlite: rusqlite::version().to_string(),
-        backups: safety::check_backups(cfg),
         ..Default::default()
     };
     report.album_exists = cfg.album.exists();

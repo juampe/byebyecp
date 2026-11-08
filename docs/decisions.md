@@ -197,22 +197,26 @@ reproducible. Every rule needed to run the tool is in the repo.
 same license preserves compatibility and keeps the project honest about its
 provenance. See `THIRD_PARTY.md`.
 
-## D17 — Two independent backups are a hard precondition
+## D17 — Two independent backups: documented, never enforced
 
-**Decision.** `apply --execute` refuses to run unless `[safety] backups` lists
-at least two existing directories: outside the album, on a different
-filesystem, and distinct from each other. `bbcp doctor` reports the same check.
-`allow_without_backups = true` is the only escape hatch and it must be set by
-the operator.
+**Decision.** Say plainly that two independent backups are expected before a
+destructive run, and keep it out of the code. `bbcp` does not read, check or
+gate on backup paths.
 
-**Why.** Quarantine is on the same disk as the album. It protects against a bad
-pattern in the plan, not against a dead disk, a mistaken `rm`, a sync client or
-a bug in `apply`. The tool cannot verify that a backup is restorable, but it can
-refuse to make the situation worse when there is no second copy.
+**Why.** Quarantine is on the same disk as the album, so it protects against a
+bad pattern in the plan, not against a dead disk or a mistaken `rm`. That part
+is real and worth documenting. But the tool cannot verify that a directory
+holds a complete, current, restorable copy; a green "backups: ok" would be a
+false guarantee, and refusing to run would push people to tick a box instead of
+thinking. The operator knows their own copies; the software states the risk.
 
-**Rejected.** A warning only: warnings are ignored exactly when they matter. A
-CLI flag: a flag can be copy-pasted from a tutorial, while a config entry forces
-the user to name two real paths.
+**Rejected.** A config entry plus a hard abort in `apply`: it looks like
+validation while validating nothing, and it blocks legitimate runs (a fresh
+import into an empty album, a scratch library, a machine that is itself the
+backup).
+
+**Rejected.** A warning banner on every command: noise after the first run,
+ignored exactly when it matters.
 
 ## D18 — As-is, no warranty, no liability
 

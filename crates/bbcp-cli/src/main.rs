@@ -266,19 +266,6 @@ fn doctor_cmd(cli: &Cli) -> Result<()> {
     if let Some(free) = report.free_bytes {
         println!("free:    {}", format_bytes(free));
     }
-    if report.backups.ok() {
-        println!("backups: ok ({} independientes)", report.backups.usable);
-    } else {
-        println!("backups: MISSING");
-        for problem in &report.backups.problems {
-            println!("  - {problem}");
-        }
-        if cfg.safety.allow_without_backups {
-            println!("  allow_without_backups = true: apply --execute seguirá sin copias.");
-        } else {
-            println!("  apply --execute se negará a ejecutar hasta configurar [safety] backups.");
-        }
-    }
     if !report.ffmpeg || !report.ffprobe {
         anyhow::bail!("install ffmpeg and ffprobe before procressing videos");
     }

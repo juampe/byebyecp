@@ -53,24 +53,26 @@ injury, or mandatory consumer rights.
 Review the dry run, the journals and the manifests. If a number looks wrong,
 stop.
 
-## 4. At least two backups, always
+## 4. Keep at least two backups
 
-Before any destructive run you must have **at least two independent backups** of
-the data you are about to touch:
+Before any destructive run, have **at least two independent backups** of the
+data you are about to touch:
 
 1. two copies on **different physical media**,
 2. outside the album and outside the quarantine,
 3. and at least one of them **offline or off-site**.
 
-`bbcp` enforces this: `bbcp apply --execute` refuses to run until
-`[safety] backups` lists two usable locations, and `bbcp doctor` reports their
-state.
+Somewhere sensible:
 
-```toml
-[safety]
-backups = ["/mnt/backup-1/Album", "/mnt/backup-2/Album"]
-allow_without_backups = false
+```text
+/mnt/backup-1/Album     # external disk
+/mnt/backup-2/Album     # off-site or cloud, synced
 ```
+
+`bbcp` does **not** check, block or verify this. It cannot tell whether a
+directory really holds a complete copy, whether it is up to date, or whether it
+is restorable — and pretending otherwise would be misleading. It is a
+recommendation, and it is on you.
 
 Rules of thumb:
 
@@ -127,5 +129,5 @@ and their behaviour are their authors' responsibility. See
 ---
 
 **Summary:** back up twice, verify the dry run, keep the quarantine, and accept
-that you run this at your own risk. The authors owe you nothing if it goes
-wrong — but the tool is built to make "wrong" recoverable.
+that you run this at your own risk. The tool will not stop you — it only makes
+"wrong" recoverable as far as it can.

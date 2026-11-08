@@ -21,11 +21,11 @@ external scripts.
 
 ## Safety rules (read before running anything)
 
-0. **Two independent backups are mandatory.** `apply --execute` refuses to run
-   unless `[safety] backups` lists two existing directories outside the album
-   and on another filesystem. Quarantine is not a backup. If the user has none,
-   stop, explain the risk and point them at `DISCLAIMER.md`; never set
-   `allow_without_backups = true` for them.
+0. **Ask about backups first.** Two independent copies, on separate media,
+   outside the album; one ideally offline or off-site. Quarantine is not a
+   backup. `bbcp` does not check this and will not stop you, so say plainly
+   what is at risk and point the user at `DISCLAIMER.md` before a destructive
+   step. Never add a runtime gate for it either.
 1. **Never delete without a verified copy.** The plan only proposes deletions
    when another member of the group survives; still, review the dry run.
 2. **`apply` is a dry run without `--execute`.** Show the summary to the user
@@ -51,19 +51,12 @@ df -h /path/to/Album      # free space where the album lives
 df -h .                   # free space where .bbcp/ lives
 ```
 
-`doctor` checks `ffmpeg`, `ffprobe`, SQLite, album permissions, every root and
-the `[safety] backups` entries. If ffmpeg/ffprobe are missing, install them
-before continuing. If backups are missing, stop before any destructive step:
+`doctor` checks `ffmpeg`, `ffprobe`, SQLite, album permissions and every root.
+If ffmpeg/ffprobe are missing, install them before continuing.
 
-```toml
-[safety]
-backups = ["/mnt/backup-1/Album", "/mnt/backup-2/Album"]
-allow_without_backups = false
-```
-
-The two directories must already exist, be outside the album and live on a
-different filesystem. A second folder on the same disk, a sync folder or
-`.bbcp/quarantine` does not count.
+It says nothing about backups on purpose: that is a conversation with the user,
+not a check. Ask whether two independent copies exist outside the album, on
+separate media, and mention `DISCLAIMER.md` before any destructive step.
 
 Minimal configuration (`bbcp.toml`):
 

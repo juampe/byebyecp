@@ -18,10 +18,10 @@ images, ≈17k videos) and keeps the rules that made that run safe.
 > **Your data, your risk.** `bbcp` moves, quarantines and can delete files. It
 > is provided **as-is, without warranty, and the authors accept zero liability**
 > for lost, corrupted or deleted data — including anything you delete in Google
-> Photos. Before any destructive run you must have **at least two independent
-> backups** on separate media; `bbcp apply --execute` refuses to run without
-> them. Quarantine is not a backup. Read
-> [`DISCLAIMER.md`](DISCLAIMER.md) before using this on a real library.
+> Photos. Keep **at least two independent backups** on separate media before any
+> destructive run. Quarantine is not a backup. The tool deliberately does **not**
+> enforce this: it cannot know whether your copies are real, and it will not
+> stop you. That judgement is yours. Read [`DISCLAIMER.md`](DISCLAIMER.md).
 
 * **Content-based deduplication** — perceptual hashes for images, SHA-256 for
   videos, pixel and frame verification before anything is removed.
@@ -49,7 +49,6 @@ images, ≈17k videos) and keeps the rules that made that run safe.
 | Runs are resumable | TSV journals in `.bbcp/logs`; the SQLite plan is the source of truth |
 | Nothing is deleted by accident | `apply` is a dry run unless `--execute`; `external_covered`/`external_dup` need their own `--only` |
 | Different content is kept | Pixel MAD for images, frame distance for videos, aspect-ratio and popcount gates |
-| Destructive runs need real backups | `apply --execute` aborts unless `[safety] backups` lists two existing locations outside the album and on another filesystem |
 
 ## Install
 
@@ -77,17 +76,17 @@ $EDITOR bbcp.toml             # add one [[roots]] block per Takeout export
 bbcp doctor
 ```
 
-Before the first destructive run, declare two independent backups in
-`[safety]` (they must already exist, outside the album and on another disk):
+Before the first destructive run, make sure you have two independent backups of
+the album (outside it, on different media, one of them offline or off-site):
 
-```toml
-[safety]
-backups = ["/mnt/backup-1/Album", "/mnt/backup-2/Album"]
+```text
+/mnt/backup-1/Album     # e.g. external disk
+/mnt/backup-2/Album     # e.g. off-site / cloud, synced
 ```
 
-`apply --execute` will refuse to run until `doctor` reports them as usable. If
-you truly have no backups, `allow_without_backups = true` bypasses the check —
-and you accept the risk described in [`DISCLAIMER.md`](DISCLAIMER.md).
+`bbcp` does not verify or enforce this; it has no way to know whether those
+copies are real or current. The responsibility, and the consequences, are
+yours — see [`DISCLAIMER.md`](DISCLAIMER.md).
 
 Then run the pipeline. Every stage is idempotent; run it again after adding a
 root.
@@ -176,7 +175,7 @@ the batches from Google Photos; see
 | Command | Purpose |
 |---|---|
 | `init` | Write a starter `bbcp.toml` and create the database |
-| `doctor` | Check ffmpeg/ffprobe, album permissions, roots and backup locations |
+| `doctor` | Check ffmpeg/ffprobe, album permissions and roots |
 | `scan` | Inventory roots (optionally `--prune`) |
 | `sidecars` | Parse Takeout JSON and match it to media |
 | `probe` | ffprobe metadata for videos |
@@ -186,7 +185,7 @@ the batches from Google Photos; see
 | `dates` | Fill `capture_ts` from sidecars/copies/EXIF/names/folders |
 | `plan` | Build `plan_actions` |
 | `verify` | MAD check for image deletes/upgrades |
-| `apply` | Dry run, or `--execute` the plan (refused without two backups) |
+| `apply` | Dry run, or `--execute` the plan |
 | `stage` | Move unique imports to `.bbcp/staging/<date>` for review |
 | `google` | Write Google deletion candidates and batches |
 | `report` | Markdown report in `.bbcp/manifests/<date>` |
@@ -204,17 +203,17 @@ docs/              playbook, safety model, decisions, Takeout notes
 assets/            icon and social preview
 .opencode/skills/  canonical agent skill
 AGENTS.md          instructions for coding agents working on the repo
-DISCLAIMER.md      warranty, liability and the two-backup requirement
+DISCLAIMER.md      warranty, liability and the two-backup recommendation
 ```
 
 ## Disclaimer
 
 This software is provided **as-is**, without warranty of any kind, and the
 authors are **not liable** for data loss, deletions, corruptions, costs or any
-other damage resulting from its use. Running `bbcp` requires **at least two
-independent backups** of the data you touch; the tool enforces this before
-`apply --execute`. Deleting items in Google Photos or any other service is done
-by you, outside this tool, and is your responsibility.
+other damage resulting from its use. Keep **at least two independent backups** of
+the data you touch: that is a recommendation, not a runtime check — `bbcp` will
+not stop you. Deleting items in Google Photos or any other service is done by
+you, outside this tool, and is your responsibility.
 
 The complete terms are in [`DISCLAIMER.md`](DISCLAIMER.md) and in the GNU GPL
 sections 15–16 ([`LICENSE`](LICENSE)).

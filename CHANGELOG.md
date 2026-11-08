@@ -8,18 +8,17 @@ All notable changes are documented here. The format follows
 
 ### Added
 
-- `[safety] backups`: `apply --execute` now refuses to run unless two
-  independent, existing backups are configured outside the album and on a
-  different filesystem; `bbcp doctor` reports their state.
-- `DISCLAIMER.md`: warranty, liability and the two-backup requirement, linked
-  from the README and the agent documentation.
-- Repository icon (`assets/icon.png`) and a 1024×1024 social preview
-  (`assets/social-preview.png`).
+- `DISCLAIMER.md`: as-is software, zero liability, the two-backup rule, the
+  scope of Google and third-party services. Linked from the README, the agent
+  instructions, the skill and the playbook.
+- Repository icon (`assets/icon.png`, transparent rounded corners) and a
+  1024×1024 social preview (`assets/social-preview.png`).
 
 ### Changed
 
-- The README, playbook, safety model, `AGENTS.md` and the OpenCode skill now
-  require confirmed backups before any destructive step.
+- The README, playbook, safety model, `AGENTS.md` and the OpenCode skill state
+  that two independent backups are expected before a destructive run. This is
+  guidance only: `bbcp` does not check backups and does not block `apply`.
 
 ## [0.1.0] - 2026-11-08
 

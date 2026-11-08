@@ -44,11 +44,11 @@ Any code change must preserve them:
    the action becomes `keep_distinct`.
 8. **The database never lives on 9p/NFS/FUSE.** SQLite plus high latency plus
    unreliable locking is a dangerous combination.
-9. **At least two independent backups before any destructive run.** `apply
-   --execute` refuses to run unless `[safety] backups` lists two usable
-   locations outside the album, on another filesystem, and both exist.
-   Quarantine is not a backup. `allow_without_backups` exists only as an
-   informed, explicit user decision — never enable it on the user's behalf.
+9. **Two independent backups are the operator's responsibility.** Remind the
+   user and point at `DISCLAIMER.md`, but do not build or add runtime checks
+   that block `apply`: the tool cannot verify that a copy is real, and
+   enforcing it would turn advice into a false guarantee. Quarantine is not a
+   backup.
 
 If a task seems to require breaking an invariant, stop and ask.
 
@@ -97,7 +97,6 @@ and any JPEG already on the system.
 | `stage.rs` | Staging of unique files and inventory update |
 | `google.rs` | Deletion candidates and batches |
 | `report.rs` | Markdown report |
-| `safety.rs` | Two-backup precondition for destructive runs |
 | `lib.rs` | Modules and `doctor` |
 | `crates/bbcp-cli/src/main.rs` | Subcommands and console output |
 
@@ -124,8 +123,8 @@ Style rules:
 
 ## 6. Workflow on a real library
 
-1. **Preflight**: `./scripts/preflight.sh`, `bbcp doctor` (ffmpeg, roots,
-   backup locations), stop ownCloud/Syncthing.
+1. **Preflight**: `./scripts/preflight.sh`, `bbcp doctor`, stop
+   ownCloud/Syncthing, and confirm with the user that two backups exist.
 2. **Inventory**: `scan`, `sidecars`, `probe`, `fingerprint`, `hash`, `group`,
    `dates`.
 3. **Plan**: `plan`; review counts and bytes. If something looks wrong, fix
@@ -145,11 +144,10 @@ Style rules:
 Never run steps 6–9 without first showing the user the dry-run summary and
 getting explicit confirmation.
 
-**Backups are mandatory.** `apply --execute` refuses to run unless
-`[safety] backups` lists two usable locations: existing directories, outside
-the album, on a different filesystem. Quarantine is not a backup. If the user
-has none, say so plainly, point them at [`DISCLAIMER.md`](DISCLAIMER.md), and
-let them decide; never enable `allow_without_backups` on their behalf.
+**Backups are the user's call.** Ask about them, say plainly what is at risk
+if there is only one copy, and point at [`DISCLAIMER.md`](DISCLAIMER.md). It is
+documentation, not a gate: `bbcp` does not check backups and must not be made
+to.
 
 ## 7. Known pitfalls
 
@@ -184,5 +182,6 @@ in `THIRD_PARTY.md`.
 The software ships **as-is, without warranty**, and the authors accept **no
 liability** for data loss. Every safety or documentation change must keep
 [`DISCLAIMER.md`](DISCLAIMER.md) and the README warning true, including the
-requirement of at least two independent backups. Do not weaken the wording
-without an explicit decision from the maintainer.
+advice to keep at least two independent backups. Do not weaken the wording
+without an explicit decision from the maintainer, and do not turn the advice
+into a runtime restriction.

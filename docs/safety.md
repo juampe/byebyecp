@@ -17,7 +17,7 @@ verification layers and the failure modes the design defends against.
 | The plan becomes stale | files moved by other tools | reference existence re-checked at apply time; failures abort |
 | The same file is inventoried twice | nested roots | `check_overlap` rejects nested roots |
 | SQLite corrupts or stalls | DB on 9p/NFS | documented requirement: local filesystem, WAL |
-| Album and quarantine are lost together | failing disk, wrong command, sync client | two independent backups required before `apply --execute` |
+| Album and quarantine are lost together | failing disk, wrong command, sync client | documented requirement of two independent backups, checked by the operator |
 
 Explicit non-goals: defending against a malicious user with write access to the
 inventory, encrypting the quarantine, or syncing with the cloud provider's API.
@@ -45,34 +45,26 @@ nothing is removed.
 ## 3. Backups: the only real undo
 
 Quarantine makes a mistake reversible. It does not survive a dead disk, a bad
-`rm`, a sync client replicating the deletion, or a bug that removes the wrong
-tree. `bbcp` therefore treats backups as a precondition, not a suggestion.
+`rm`, a sync client replicating a deletion, or a bug that removes the wrong
+tree. Only a backup does.
 
-Before `apply --execute`, `[safety] backups` must list **at least two** usable
-locations:
+**Keep at least two independent copies** before a destructive run:
 
-```toml
-[safety]
-backups = ["/mnt/backup-1/Album", "/mnt/backup-2/Album"]
-allow_without_backups = false
-```
+1. on different physical media;
+2. outside the album and outside the quarantine;
+3. one of them offline or off-site (3-2-1 rule).
 
-A location counts only when it:
+`bbcp` does not verify or enforce this. It cannot know whether a path holds a
+real, current, restorable copy, so a green check would be a lie. `doctor`
+reports tools, paths and permissions; backups remain the operator's
+responsibility, described in [`../DISCLAIMER.md`](../DISCLAIMER.md).
 
-1. exists and is a directory;
-2. is outside the album (it cannot be inside it or contain it);
-3. is on a different filesystem than the album;
-4. is not a duplicate of another entry.
+Rules the tool cannot enforce either:
 
-`bbcp doctor` prints the same check. When it fails, `apply --execute` aborts
-with the reasons; the dry run still works.
-
-Rules the tool cannot enforce:
-
-* one copy should be **offline or off-site** (the 3-2-1 rule);
 * a sync folder is not a backup — deletion propagates;
 * test a restore before trusting the backup;
-* `allow_without_backups = true` is an explicit acceptance of total loss.
+* a second folder on the same disk protects against a wrong command, not
+  against hardware failure.
 
 ## 4. Irreversible operations
 
@@ -129,8 +121,8 @@ operations stay, and the run can be repeated.
 
 ## 7. Operational rules
 
-0. Two independent backups exist, are outside the album and are on another
-   filesystem; `bbcp doctor` reports them as usable.
+0. Two independent backups exist, outside the album and on separate media.
+   Nothing checks this for you; decide it before you start.
 1. Stop ownCloud/Syncthing/Drive before moving album files.
 2. Keep the database and quarantine on a local filesystem.
 3. Run `plan` and the dry-run `apply` and read the numbers.
