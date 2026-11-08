@@ -1,58 +1,58 @@
 ---
 name: bye-bye-cloud-photos
-description: Consolidar una biblioteca de fotos y vídeos en la nube (Google Takeout, volcados antiguos, álbum local) con `bbcp`: inventario SQLite, deduplicación por contenido, elección de la mejor copia, verificación por píxeles/fotogramas, cuarentena reversible, journal y lotes de borrado de Google Fotos. Úsalo cuando haya que liberar espacio o unificar bibliotecas sin perder archivos.
+description: Consolidate a cloud photo and video library (Google Takeout, old dumps, local album) with `bbcp`: SQLite inventory, content-based deduplication, best-copy selection, pixel/frame verification, reversible quarantine, journals, and Google Photos deletion batches. Use it when freeing space or merging libraries without losing files.
 ---
 
-# Bye Bye Cloud Photos — skill operativo
+# Bye Bye Cloud Photos — operating skill
 
-Herramienta: `bbcp` (Rust). Repositorio: <https://github.com/juampe/byebyecp>.
-Toda la configuración vive en `bbcp.toml`; todo el estado, en `.bbcp/`.
+Tool: `bbcp` (Rust). Repository: <https://github.com/juampe/byebyecp>.
+All configuration lives in `bbcp.toml`; all state lives in `.bbcp/`.
 
-Este skill es autosuficiente. No requiere documentos previos ni scripts
-externos.
+This skill is self-sufficient. It does not require previous documents or
+external scripts.
 
-## Cuándo usarlo
+## When to use it
 
-* Consolidar varios exports de Google Takeout en un único álbum local.
-* Deduplicar una biblioteca conservando la mejor copia.
-* Liberar espacio de forma reversible (cuarentena) antes de borrar en la nube.
-* Preparar lotes de borrado en Google Fotos con prueba de copia local.
-* Revisar por qué dos archivos se consideran iguales o distintos.
+* Consolidate several Google Takeout exports into a single local album.
+* Deduplicate a library while keeping the best copy.
+* Free space reversibly (quarantine) before deleting in the cloud.
+* Prepare Google Photos deletion batches with proof of a local copy.
+* Investigate why two files are considered the same or different.
 
-## Reglas de seguridad (leer antes de ejecutar)
+## Safety rules (read before running anything)
 
-1. **Nunca borrar sin copia verificada.** El plan solo propone borrados cuando
-   otro miembro del grupo sobrevive; aun así, revisa el dry run.
-2. **`apply` es dry run sin `--execute`.** Enseña el resumen al usuario y pide
-   confirmación antes de ejecutar.
-3. **Los borrados del álbum van a cuarentena** (`--album-remove quarantine`,
-   por defecto). No uses `unlink` salvo que el usuario lo pida y se haya
-   verificado el espacio/backup.
-4. **Las fuentes externas no se purgan por defecto.** `external_covered` y
-   `external_dup` exigen `--only` explícito.
-5. **Antes de purgar un Takeout, archiva sus JSON** (metadatos y google_id).
-6. **Para si la verificación falla.** `keep_distinct` significa "revisar a
-   mano"; no lo fuerces.
-7. **No toques documentos, ROMs ni archivos que no sean imagen/vídeo.**
-8. **La BD debe estar en un sistema de archivos local.** Nunca en 9p/NFS/FUSE.
-9. **Detén la sincronización** (ownCloud, Syncthing, Drive) mientras mueves
-   archivos del álbum.
+1. **Never delete without a verified copy.** The plan only proposes deletions
+   when another member of the group survives; still, review the dry run.
+2. **`apply` is a dry run without `--execute`.** Show the summary to the user
+   and ask for confirmation before executing.
+3. **Album deletions go to quarantine** (`--album-remove quarantine`, the
+   default). Do not use `unlink` unless the user asks for it and space/backup
+   has been verified.
+4. **External sources are never purged by default.** `external_covered` and
+   `external_dup` require an explicit `--only`.
+5. **Before purging a Takeout root, archive its JSON files** (metadata and
+   `googleId`).
+6. **Stop when verification fails.** `keep_distinct` means "review manually";
+   do not force it.
+7. **Do not touch documents, ROMs or anything that is not image/video.**
+8. **The database must be on a local filesystem.** Never on 9p/NFS/FUSE.
+9. **Stop file sync** (ownCloud, Syncthing, Drive) while moving album files.
 
 ## 0. Preflight
 
 ```bash
 bbcp doctor
-df -h /ruta/Album          # espacio libre donde vive el álbum
-df -h .                    # espacio libre donde vive .bbcp/
+df -h /path/to/Album      # free space where the album lives
+df -h .                   # free space where .bbcp/ lives
 ```
 
-`doctor` comprueba `ffmpeg`, `ffprobe`, SQLite, permisos del álbum y existencia
-de cada raíz. Si falta ffmpeg/ffprobe, instálalos antes de continuar.
+`doctor` checks `ffmpeg`, `ffprobe`, SQLite, album permissions and that every
+root exists. If ffmpeg/ffprobe are missing, install them before continuing.
 
-Configuración mínima (`bbcp.toml`):
+Minimal configuration (`bbcp.toml`):
 
 ```toml
-album = "/ruta/Album"
+album = "/path/Album"
 metadata_archive = ".bbcp/metadata-archive"
 
 [paths]
@@ -64,12 +64,12 @@ manifests = ".bbcp/manifests"
 
 [[roots]]
 label = "album"
-path = "/ruta/Album"
+path = "/path/Album"
 kind = "album"
 
 [[roots]]
 label = "takeout-2026"
-path = "/ruta/Takeout/Takeout/Google Fotos"
+path = "/path/Takeout/Takeout/Google Fotos"
 kind = "source"
 
 [rules]
@@ -80,84 +80,86 @@ material_upgrade_ratio = 1.25
 frame_distance = 16
 duration_tolerance = 0.5
 ignore_dates = ["1970-01-01", "1980-01-01"]
-import_dump_days = []   # p. ej. ["2026-01-05"] si el Takeout volcó todo ahí
+import_dump_days = []   # e.g. ["2026-01-05"] if Takeout dumped everything there
 ```
 
-Registrar raíces nuevas:
+Register new roots:
 
 ```bash
 bbcp scan --root takeout-2026
 ```
 
-`scan` sincroniza las raíces del TOML con la BD automáticamente.
+`scan` automatically syncs the roots in the TOML with the database.
 
-## 1. Inventario y fingerprints
+## 1. Inventory and fingerprints
 
 ```bash
-bbcp scan                 # todas las raíces; --prune borra filas desaparecidas
-bbcp sidecars             # JSON de Takeout → tabla sidecars
-bbcp probe --workers 16   # metadatos de vídeo (ffprobe)
+bbcp scan                 # all roots; --prune removes disappeared rows
+bbcp sidecars             # Takeout JSON -> sidecars table
+bbcp probe --workers 16   # video metadata (ffprobe)
 bbcp fingerprint --workers 16
-bbcp hash --workers 16    # SHA-256 solo de vídeos con tamaño repetido
+bbcp hash --workers 16    # SHA-256 only for videos with a repeated size
 bbcp group --reset
 bbcp dates
 ```
 
-Orden importante: `group` **antes** de `dates`. Así una copia sin metadatos
-hereda la fecha de su gemela exacta (puente `sidecar-copy`).
+Order matters: `group` **before** `dates`. This lets a copy without metadata
+inherit the date from its exact twin (`sidecar-copy` bridge).
 
-Comprobaciones útiles:
+Useful checks:
 
 ```bash
 bbcp status
 sqlite3 .bbcp/bbcp.db "SELECT media, COUNT(*) FROM files GROUP BY media;"
 ```
 
-## 2. Plan y verificación
+## 2. Plan and verification
 
 ```bash
 bbcp plan
 bbcp verify --workers 8
 ```
 
-Acciones posibles:
+Possible actions:
 
-| Acción | Significado |
+| Action | Meaning |
 |---|---|
-| `keep` | Se queda donde está |
-| `keep_distinct` | Parecía duplicado pero la verificación lo separó: revisar |
-| `delete` | Duplicado del álbum → cuarentena |
-| `upgrade` | Copia mejor en una fuente → sustituye la del álbum |
-| `import` | Media única de una fuente → copiar al álbum |
-| `external_covered` | Duplicado de una copia protegida del álbum → purgar fuente |
-| `external_dup` | Duplicado dentro de una fuente → purgar tras importar la mejor |
+| `keep` | Stays where it is |
+| `keep_distinct` | Looked like a duplicate but verification separated it: review |
+| `delete` | Album duplicate → quarantine |
+| `upgrade` | Better copy in a source → replaces the album copy |
+| `import` | Unique source media → copy into the album |
+| `external_covered` | Duplicate of a protected album copy → purge the source |
+| `external_dup` | Duplicate inside a source → purge after importing the best |
 
-Revisa el resumen (conteos y bytes). Si algo no cuadra, corrige la config y
-repite `plan`; no hay nada escrito en disco todavía.
+Review the summary (counts and bytes). If something looks wrong, fix the
+configuration and run `plan` again; nothing has touched the disk yet.
 
-## 3. Ejecución
+## 3. Execution
 
 ```bash
 bbcp apply                                    # dry run
-bbcp apply --execute --only upgrade,import    # aditivo y verificado
+bbcp apply --execute --only upgrade,import    # additive and verified
 bbcp apply --execute --only delete --album-remove quarantine
 ```
 
-Qué hace `apply`:
+What `apply` does:
 
-* copia a `.bbcp-tmp-*` en el directorio destino, `fsync`, compara SHA-256 y
-  `rename` atómico;
-* mueve el destino antiguo de un `upgrade` a cuarentena;
-* mueve los duplicados del álbum a `.bbcp/quarantine/<fecha>/album/<ruta>`;
-* escribe `.bbcp/logs/apply-<fecha>.tsv` (reanudable).
+* copies to `.bbcp-tmp-*` in the destination directory, `fsync`, compares
+  SHA-256 and `rename`s atomically;
+* moves the old target of an `upgrade` to quarantine;
+* moves album duplicates to `.bbcp/quarantine/<date>/album/<path>`;
+* writes `.bbcp/logs/apply-<date>.tsv` (resumable);
+* updates the inventory: imported rows point at their album path, and rows
+  moved to quarantine or unlinked are dropped.
 
-`--consume-sources` elimina la fuente tras una copia verificada. Úsalo solo si
-el álbum está en otro disco y el usuario lo aprueba.
+`--consume-sources` removes the source after a verified copy. Use it only when
+the album is on another disk and the user approves.
 
-Si hay errores, el comando termina con código distinto de cero y deja el
-journal con la causa. Corrige y vuelve a ejecutar: es idempotente.
+If any operation fails, the command exits non-zero and the journal contains the
+cause. Fix it and run again: the operation is idempotent.
 
-## 4. Stage de revisión
+## 4. Staging for review
 
 ```bash
 bbcp stage --root takeout-2026           # dry run
@@ -165,21 +167,21 @@ bbcp stage --root takeout-2026 --execute
 bbcp stage --list
 ```
 
-Mueve los `import` a `.bbcp/staging/<fecha>/<raíz>/<ruta>` y actualiza la BD.
-Después:
+Moves `import` files to `.bbcp/staging/<date>/<root>/<path>` and updates the
+database. Then:
 
 ```bash
 bbcp apply --execute --only import
 ```
 
-Revisa el stage antes de importar si hay dudas sobre nombres o duplicados
-internos entre raíces.
+Review the staging tree first if there are doubts about names or duplicates
+between source roots.
 
-## 5. Limpieza de fuentes externas
+## 5. Cleaning external sources
 
-Solo después de que el álbum tenga copias verificadas y el usuario lo apruebe:
+Only after the album has verified copies and the user approves:
 
-1. Archiva los JSON de la raíz:
+1. Archive the JSON files of the root:
 
    ```bash
    OUT=".bbcp/metadata-archive/takeout-2026.tar.gz"
@@ -188,93 +190,92 @@ Solo después de que el álbum tenga copias verificadas y el usuario lo apruebe:
    gzip -t "$OUT.part" && mv "$OUT.part" "$OUT"
    ```
 
-2. Purga en cuarentena (recomendado):
+2. Purge into quarantine (recommended):
 
    ```bash
    bbcp apply --execute --only external_covered --external-remove quarantine
    bbcp apply --execute --only external_dup --external-remove quarantine
    ```
 
-3. Solo si se quiere liberar espacio de verdad y hay backup:
-   `--external-remove unlink`. Es irreversible.
+3. Only if you really need to free space and have a backup:
+   `--external-remove unlink`. This is irreversible.
 
-## 6. Google Fotos
+## 6. Google Photos
 
 ```bash
-bbcp plan      # imprescindible: google usa el plan para saber qué sobrevive
+bbcp plan      # mandatory: google uses the plan to know what survives
 bbcp google
 ```
 
-Salidas en `.bbcp/manifests/<fecha>/`:
+Outputs under `.bbcp/manifests/<date>/`:
 
-* `google_delete_candidates.tsv` — columnas `google_id`, `title`, `taken`,
+* `google_delete_candidates.tsv` — columns `google_id`, `title`, `taken`,
   `bytes`, `takeout_path`, `album_ref`, `match`.
-* `google_batches/batch_NNN.tsv` — mismos ítems en trozos de `google.batch_size`.
+* `google_batches/batch_NNN.tsv` — the same items in chunks of
+  `google.batch_size`.
 
-Condiciones para que un ítem sea candidato: su sidecar está emparejado con un
-archivo local, ese archivo pertenece a un grupo exacto con una copia del álbum
-que sobrevive al plan, y la ruta de esa copia existe.
+An item is a candidate only when its sidecar is matched to a local file, that
+file belongs to an exact group with an album copy that survives the plan, and
+that album path exists. Items without a local copy are counted as `kept`.
 
-Nunca borres en Google un ítem que no esté en un lote. Los ítems sin copia
-local cuentan como `kept`.
+Never delete a Google item that is not in a batch.
 
-Estrategia: revisa el uso real de la cuenta, empieza por el lote de vídeos o
-los más pesados, y borra por tandas comprobando el espacio después de cada
-una.
+Strategy: check the account's real usage, start with videos or the heaviest
+items, and delete in batches, checking free space after each one.
 
-## 7. Informe y cierre
+## 7. Report and close
 
 ```bash
 bbcp report
 ```
 
-Genera `.bbcp/manifests/<fecha>/report.md` con inventario, plan por tipo,
-grupos, fechas conocidas y verificaciones. Guarda también los journals.
+Writes `.bbcp/manifests/<date>/report.md` with the inventory, plan by type,
+groups, known dates and verification counts. Keep the journals too.
 
-Al terminar:
+At the end:
 
 ```bash
 bbcp scan --prune
 bbcp status
-du -sh /ruta/Album .bbcp/quarantine
+du -sh /path/Album .bbcp/quarantine
 ```
 
 ## 8. Rollback
 
-Cada journal TSV tiene `source`, `target`, `backup`, `status`.
+Every journal TSV has `source`, `target`, `backup`, `status`.
 
-* Duplicados del álbum:
-  `mv .bbcp/quarantine/<fecha>/album/<ruta> /ruta/Album/<ruta>`
-* Upgrades: la copia antigua está en
-  `.bbcp/quarantine/<fecha>/upgrade/album/<ruta>`.
-* Fuentes: `.bbcp/quarantine/<fecha>/source/<raíz>/<ruta>`.
-* Stage: `.bbcp/staging/<fecha>/<raíz>/<ruta>`; vuelve a mover el archivo y
-  actualiza la BD con `bbcp scan --root staging-<fecha>` o reescanea.
+* Album duplicates:
+  `mv .bbcp/quarantine/<date>/album/<path> /path/Album/<path>`
+* Upgrades: the old copy is in
+  `.bbcp/quarantine/<date>/upgrade/album/<path>`.
+* Sources: `.bbcp/quarantine/<date>/source/<root>/<path>`.
+* Staging: `.bbcp/staging/<date>/<root>/<path>`; move the file back and
+  rescan (`bbcp scan --root staging-<date>`) or run a full rescan.
 
-## 9. Diagnóstico
+## 9. Troubleshooting
 
-| Síntoma | Causa probable | Acción |
+| Symptom | Likely cause | Action |
 |---|---|---|
-| `fechas` no rellena nada | `group` no se ejecutó antes | `bbcp group && bbcp dates` |
-| Grupo gigante de imágenes | cierre transitivo o hashes degenerados | no existe cierre transitivo; sube `min_popcount` |
-| Muchos `keep_distinct` | ráfagas o copias recomprimidas | revisar MAD con `bbcp compare A B` |
-| Vídeos no agrupados | no comparten tamaño o falta `hash` | `bbcp hash --all` |
-| `apply` dice "reference is not present" | plan obsoleto o referencia borrada | `bbcp scan --prune && bbcp plan` |
-| Colisión en cuarentena | dos raíces con la misma ruta relativa | inspeccionar y resolver a mano |
-| Google sin candidatos | sidecars sin emparejar o plan no ejecutado | `bbcp sidecars && bbcp plan` |
-| Todo va lentísimo | BD o cuarentena en 9p/NFS | mover `.bbcp/` a disco local |
+| Dates are not filled | `group` did not run before `dates` | `bbcp group && bbcp dates` |
+| Huge image group | degenerate hashes | there is no transitive closure; raise `min_popcount` |
+| Many `keep_distinct` | bursts or recompressed copies | inspect MAD with `bbcp compare A B` |
+| Videos not grouped | sizes differ or `hash` missing | `bbcp hash --all` |
+| `apply` says "reference is not present" | stale plan or deleted reference | `bbcp scan --prune && bbcp plan` |
+| Quarantine collision | two roots share a relative path | inspect and resolve manually |
+| Google has no candidates | unmatched sidecars or plan not built | `bbcp sidecars && bbcp plan` |
+| Everything is very slow | database or quarantine on 9p/NFS | move `.bbcp/` to a local disk |
 
-## 10. Checklist final
+## 10. Final checklist
 
-- [ ] `bbcp doctor` sin avisos.
+- [ ] `bbcp doctor` is clean.
 - [ ] `scan`, `sidecars`, `probe`, `fingerprint`, `hash`, `group`, `dates`.
-- [ ] `plan` revisado (conteos y bytes).
-- [ ] `verify` ejecutado; `keep_distinct` revisados.
-- [ ] Dry run de `apply` mostrado al usuario.
-- [ ] `upgrade,import` ejecutados y verificados.
-- [ ] Duplicados en cuarentena.
-- [ ] Stage revisado e importado.
-- [ ] JSON archivados antes de purgar fuentes.
-- [ ] Lotes de Google revisados; borrado por tandas.
-- [ ] `report` generado y journals conservados.
-- [ ] Rescan final y espacio comprobado.
+- [ ] `plan` reviewed (counts and bytes).
+- [ ] `verify` run; `keep_distinct` reviewed.
+- [ ] Dry-run `apply` shown to the user.
+- [ ] `upgrade,import` executed and verified.
+- [ ] Duplicates quarantined.
+- [ ] Staging reviewed and imported.
+- [ ] JSON archived before purging sources.
+- [ ] Google batches reviewed; deletion done in batches.
+- [ ] `report` generated and journals kept.
+- [ ] Final rescan and free-space check.

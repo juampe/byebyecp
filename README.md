@@ -25,7 +25,7 @@ images, ≈17k videos) and keeps the rules that made that run safe.
   [skill](.opencode/skills/bye-bye-cloud-photos/SKILL.md) describe the whole
   procedure so an assistant can run it without inventing steps.
 
-> Documentación operativa en español: [`docs/playbook.md`](docs/playbook.md).
+> For the complete operational procedure, see [`docs/playbook.md`](docs/playbook.md).
 
 ## Guarantees
 

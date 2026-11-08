@@ -1,293 +1,289 @@
-# Playbook operativo
+# Operational playbook
 
-Guía completa para consolidar una biblioteca real con `bbcp`. Está pensada para
-que la siga una persona o un agente sin conocimiento previo del proyecto.
+Complete guide to consolidating a real library with `bbcp`. It is written so a
+person or an agent can follow it without prior knowledge of the project.
 
-Si solo quieres probar la herramienta, empieza por el
-[README](../README.md#quickstart). Aquí se documenta una ejecución seria.
+If you only want to try the tool, start with the
+[README](../README.md#quickstart). This page documents a serious run.
 
-## 0. Objetivo y principios
+## 0. Goal and principles
 
-Consolidar en un único álbum local todas las fotos y vídeos dispersos en
-exports de Google Photos, volcados antiguos y papeleras, quedándose con la
-**mejor copia** de cada contenido, y preparar el borrado por lotes en Google
-Fotos sin perder nada.
+Consolidate every photo and video scattered across Google Photos exports, old
+dumps and recycle bins into a single local album, keeping the **best copy** of
+each piece of content, and prepare batched deletion in Google Photos without
+losing anything.
 
-Principios:
+Principles:
 
-1. **Nada se borra sin una copia verificada.**
-2. **Todo es reversible.** Los borrados van a cuarentena en el mismo sistema
-   de archivos (rename atómico) y quedan en un journal.
-3. **No asumir que el álbum es la mejor copia.** Puede haber versiones de más
-   resolución en carpetas temporales.
-4. **Registrar antes de actuar.** Cada fase deja manifiestos TSV y journals.
-5. **Detener la sincronización** (ownCloud, Syncthing, Drive) mientras se
-   mueven archivos del álbum.
-6. **La base de datos vive en un sistema de archivos local**, nunca en 9p,
-   NFS o FUSE.
+1. **Nothing is deleted without a verified copy.**
+2. **Everything is reversible.** Deletions move files to quarantine on the same
+   filesystem (atomic rename) and are recorded in a journal.
+3. **Do not assume the album is the best copy.** Higher-resolution versions may
+   exist in temporary folders.
+4. **Record before acting.** Every phase leaves TSV manifests and journals.
+5. **Stop sync** (ownCloud, Syncthing, Drive) while moving album files.
+6. **The database lives on a local filesystem**, never on 9p, NFS or FUSE.
 
-## 1. Entorno
+## 1. Environment
 
-Ejemplo de disposición (adapta las rutas):
+Example layout (adapt the paths):
 
-| Elemento | Ruta |
+| Item | Path |
 |---|---|
-| Álbum | `/mnt/b/ownCloud/Album` |
-| Takeout nuevo | `/mnt/b/GPhotos/Takeout/Takeout/Google Fotos` |
-| Cuarentena | `/mnt/b/PMM/quarantine` |
-| Base de datos | `/home/juampe/.local/share/bbcp/bbcp.db` |
+| Album | `/mnt/b/ownCloud/Album` |
+| New Takeout | `/mnt/b/GPhotos/Takeout/Takeout/Google Fotos` |
+| Quarantine | `/mnt/b/PMM/quarantine` |
+| Database | `/home/juampe/.local/share/bbcp/bbcp.db` |
 | Logs / journals | `/mnt/b/PMM/logs` |
-| Manifiestos | `/mnt/b/PMM/manifests/<YYYY-MM-DD>` |
-| Archivo de metadatos | `/mnt/b/PMM/metadata-archive` |
-| Stage de revisión | `/mnt/b/PMM/staging-revision/<YYYY-MM-DD>` |
-| Configuración | `/home/juampe/Develop/byebyecp/bbcp.toml` |
+| Manifests | `/mnt/b/PMM/manifests/<YYYY-MM-DD>` |
+| Metadata archive | `/mnt/b/PMM/metadata-archive` |
+| Review staging | `/mnt/b/PMM/staging-revision/<YYYY-MM-DD>` |
+| Configuration | `/home/juampe/Develop/byebyecp/bbcp.toml` |
 
-Dependencias: `ffmpeg`, `ffprobe` y una base de datos local. Nada más.
+Dependencies: `ffmpeg`, `ffprobe` and a local database. Nothing else.
 
-El montaje `/mnt/b` puede ser 9p: cada operación de metadatos tiene latencia
-alta. Por eso:
+`/mnt/b` may be 9p: every metadata operation has high latency. Therefore:
 
-* la BD va en ext4;
-* los hashes y fingerprints se paralelizan;
-* el journal sincroniza cada 100 líneas, no por archivo;
-* los renames/borrados se ejecutan en paralelo.
+* the database lives on ext4;
+* hashes and fingerprints are parallelized;
+* the journal syncs every 100 lines, not per file;
+* renames and deletions run in parallel.
 
-## 2. Arquitectura
+## 2. Architecture
 
-### 2.1 Base de datos
+### 2.1 Database
 
-`.bbcp/bbcp.db` (SQLite, WAL) contiene:
+`.bbcp/bbcp.db` (SQLite, WAL) contains:
 
-* **roots** — raíces inventariadas (`album`, `takeout-2026`, `old-staging`,
+* **roots** — inventoried roots (`album`, `takeout-2026`, `old-staging`,
   `album-dtrash`, `todo`, `sync-delete`, `gdrive-delete`…).
-* **files** — un registro por archivo: `path` (único), `rel_path`, `media`
+* **files** — one row per file: `path` (unique), `rel_path`, `media`
   (`image`/`video`/`other`), `size`, `mtime`, `width`, `height`, `duration`,
   `bitrate`, `codec`, `sha256`, `phash`, `dhash`, `ahash`, `capture_ts`,
   `capture_source`, `fingerprint_status`, `meta_status`.
-* **sidecars** — JSON de Takeout: `google_id`, `title`, `taken_ts`,
+* **sidecars** — Takeout JSON: `google_id`, `title`, `taken_ts`,
   `creation_ts`, `description`, `matched_file_id`.
-* **groups** / **group_members** — grupos exactos; `kind` =
+* **groups** / **group_members** — exact groups; `kind` =
   `image-exact`/`video-exact`; `role` = `best`/`duplicate`.
-* **plan_actions** — acción por archivo: `keep`, `keep_distinct`, `delete`,
-  `upgrade`, `import`, `external_covered`, `external_dup`, con `reference_id`,
+* **plan_actions** — action per file: `keep`, `keep_distinct`, `delete`,
+  `upgrade`, `import`, `external_covered`, `external_dup`, with `reference_id`,
   `target_path`, `bytes`, `mad`, `reason`.
 
-### 2.2 Módulos
+### 2.2 Modules
 
-| Módulo | Función |
+| Module | Purpose |
 |---|---|
-| `walk` | inventario de raíces |
-| `dates` | sidecars, puente entre copias, EXIF, nombre, carpeta |
-| `video` | ffprobe (resolución con rotación, duración, bitrate) |
-| `imagehash` | pHash/dHash/aHash, MAD, fotograma de vídeo |
-| `hash` | SHA-256 en streaming |
-| `group` | grupos exactos |
-| `quality` | ranking y mejora material |
+| `walk` | root inventory |
+| `dates` | sidecars, copy bridge, EXIF, filename, folder |
+| `video` | ffprobe (rotation-aware resolution, duration, bitrate) |
+| `imagehash` | pHash/dHash/aHash, MAD, video frame |
+| `hash` | streaming SHA-256 |
+| `group` | exact groups |
+| `quality` | ranking and material upgrade |
 | `plan` | `plan_actions` |
-| `verify` | MAD antes de borrar imágenes |
-| `apply` | copias atómicas, cuarentena, journal |
-| `stage` | stage de únicos |
-| `google` | candidatos y lotes de Google |
-| `report` | informe Markdown |
+| `verify` | MAD before deleting images |
+| `apply` | atomic copies, quarantine, journal |
+| `stage` | staging of unique files |
+| `google` | Google candidates and batches |
+| `report` | Markdown report |
 
-## 3. Reglas de decisión
+## 3. Decision rules
 
-### 3.1 Imágenes: duplicado exacto perceptual
+### 3.1 Images: perceptual exact duplicate
 
-Clave: terna `(pHash, dHash, aHash)` de 64 bits.
+Key: the `(pHash, dHash, aHash)` triple, 64 bits each.
 
-Guardas obligatorias:
+Mandatory guards:
 
-* `popcount` de **cada** hash ≥ 12. Descarta imágenes lisas, negras o capturas
-  que colisionan.
-* Variación de **aspect ratio** dentro del grupo ≤ 5 %. Si no, se descarta el
-  grupo.
-* **Sin cierre transitivo.** No se encadenan grupos: una ráfaga puede acabar
-  con cientos de fotos distintas unidas.
-* Verificación final por píxeles (MAD) antes de borrar.
+* `popcount` of **each** hash ≥ 12. This discards flat, black or screenshot-like
+  images that collide.
+* **Aspect-ratio** variation inside the group ≤ 5%. Otherwise the group is
+  discarded.
+* **No transitive closure.** Groups are not chained: a burst could otherwise
+  end up with hundreds of different photos in one group.
+* Final pixel verification (MAD) before deleting.
 
-**MAD** = diferencia absoluta media de dos miniaturas 64×64 en gris.
+**MAD** = mean absolute difference of two 64×64 grayscale thumbnails.
 
-| MAD | Interpretación | Acción |
+| MAD | Interpretation | Action |
 |---|---|---|
-| 0 – 0,5 | copias idénticas | borrar la peor |
-| 0,5 – 1,2 | recomprimidas | borrar la peor |
-| ≥ 2,7 | frames distintos de ráfaga | conservar ambas |
+| 0 – 0.5 | identical copies | delete the worse one |
+| 0.5 – 1.2 | recompressed copies | delete the worse one |
+| ≥ 2.7 | different burst frames | keep both |
 
-Umbral por defecto: `mad_threshold = 1.5`. Por encima, la acción se convierte
-en `keep_distinct`.
+Default threshold: `mad_threshold = 1.5`. Above it, the action becomes
+`keep_distinct`.
 
-### 3.2 Vídeos: duplicado exacto y approx
+### 3.2 Videos: exact duplicate and approx
 
-* **Exacto**: mismo SHA-256. Solo se hashean los candidatos que comparten
-  tamaño con otro vídeo (ahorra leer cientos de GB).
-* **Approx** (mismo contenido, distinto encoding): misma resolución y
-  `|Δduración| ≤ 0,5 s`, y verificación por fotograma: extraer un frame en el
-  punto medio y comparar `pHash + dHash`.
-  * distancia ≤ 16 → mismo vídeo;
-  * distancia > 16 → vídeos distintos (no borrar).
+* **Exact**: same SHA-256. Only videos that share a size with another video are
+  hashed (saves reading hundreds of GB).
+* **Approx** (same content, different encoding): same resolution and
+  `|Δduration| ≤ 0.5 s`, plus frame verification: extract a frame at the
+  midpoint and compare `pHash + dHash`.
+  * distance ≤ 16 → same video;
+  * distance > 16 → different videos (do not delete).
 
-No fiarse solo de duración+resolución: en una biblioteca real, ~85 % de los
-"approx" eran vídeos distintos.
+Do not trust duration + resolution alone: in one real library, ~85% of
+"approx" pairs were different videos.
 
-La implementación actual agrupa vídeos por SHA-256. La comprobación por
-fotograma (`frame_distance`) queda como herramienta de diagnóstico
-(`bbcp compare` para imágenes; la extracción de frames está en
-`imagehash::video_frame`) y como base para extensiones futuras.
+The current implementation groups videos by SHA-256. Frame comparison
+(`frame_distance`) remains a diagnostic tool (`bbcp compare` for images; frame
+extraction lives in `imagehash::video_frame`) and the basis for future
+extensions.
 
-### 3.3 Ranking de calidad
+### 3.3 Quality ranking
 
-Orden: `(píxeles, bitrate o tamaño, antigüedad, tamaño)`.
+Order: `(pixels, bitrate or size, age, size)`.
 
-* Los píxeles mandan: una copia de 12 MP gana a una de 2 MP.
-* A igual resolución, gana la que tiene más bitrate (vídeo) o más bytes
-  (imagen menos comprimida).
-* A igualdad, gana la más antigua (las derivadas se escriben después).
-* El tamaño es el desempate final.
+* Pixels come first: a 12 MP copy beats a 2 MP copy.
+* At equal resolution, higher bitrate (video) or more bytes (less compressed
+  image) wins.
+* Otherwise the older file wins (derivatives are written later).
+* File size is the final tie-breaker.
 
-**Mejora material** (para sustituir): más resolución, o misma resolución con
-bitrate/tamaño > 1,25×. No se sustituye por un 2 % de diferencia.
+**Material upgrade** (to replace a copy): more resolution, or the same
+resolution with bitrate/size > 1.25×. A 2% difference is not an upgrade.
 
-### 3.4 Fechas
+### 3.4 Dates
 
-Orden de fuentes:
+Source order:
 
-1. `sidecar` del propio archivo (`photoTakenTime`).
-2. `sidecar` de una **copia exacta** en otra raíz (puente de metadatos).
-3. EXIF `DateTimeOriginal` (o digitized/created).
-4. Nombre de archivo (`2021-08-07 08.18.41`, `IMG_20210807_081841`, …).
-5. Carpeta `YYYY/YYYY-MM-DD`.
+1. the file's own `sidecar` (`photoTakenTime`).
+2. the `sidecar` of an **exact copy** in another root (metadata bridge).
+3. EXIF `DateTimeOriginal` (or digitized/created).
+4. file name (`2021-08-07 08.18.41`, `IMG_20210807_081841`, …).
+5. folder `YYYY/YYYY-MM-DD`.
 
-Exclusiones:
+Exclusions:
 
-* Centinelas `1970-01-01` y `1980-01-01`.
-* Carpetas de volcado masivo configuradas en `import_dump_days`: la fecha del
-  nombre/carpeta es la de **importación**, no la de captura.
+* sentinels `1970-01-01` and `1980-01-01`.
+* bulk-import folders configured in `import_dump_days`: the name/folder date
+  is the **import** date, not the capture date.
 
-## 4. Flujo completo
+## 4. Full pipeline
 
-### Fase 0 — Preflight
+### Phase 0 — Preflight
 
 ```bash
 ./scripts/preflight.sh
 bbcp doctor
-# ownCloud/Syncthing/Drive parados
+# ownCloud/Syncthing/Drive stopped
 df -h /mnt/b | tail -1
 sqlite3 .bbcp/bbcp.db "PRAGMA journal_mode;"   # wal
 ```
 
-### Fase 1 — Inventario
+### Phase 1 — Inventory
 
 ```bash
 bbcp scan
-# o por raíz:
+# or per root:
 bbcp scan --root album
 bbcp scan --root takeout-2026
 ```
 
-### Fase 2 — Sidecars de Google
+### Phase 2 — Google sidecars
 
 ```bash
 bbcp sidecars
 ```
 
-Empareja `x.jpg.json` y `x.jpg.supplemental-metadata.json` con `x.jpg`,
-incluidos nombres truncados por Takeout antiguos (coincidencia única por
-prefijo).
+Matches `x.jpg.json` and `x.jpg.supplemental-metadata.json` to `x.jpg`,
+including names truncated by older Takeout exports (unique prefix match).
 
-### Fase 3 — Metadatos
+### Phase 3 — Metadata
 
 ```bash
 bbcp probe --workers 16
 ```
 
-Solo vídeos. Las imágenes obtienen dimensiones en `fingerprint`.
+Videos only. Images get their dimensions from `fingerprint`.
 
-### Fase 4 — Fingerprint de imágenes
+### Phase 4 — Image fingerprints
 
 ```bash
 bbcp fingerprint --workers 16
 ```
 
-### Fase 5 — SHA-256 de vídeos candidatos
+### Phase 5 — SHA-256 for candidate videos
 
 ```bash
 bbcp hash --workers 16
-# todos:
+# every video:
 bbcp hash --all --workers 16
 ```
 
-Solo hashea vídeos que comparten tamaño con otro. Los de tamaño único no se
-pueden confirmar por SHA-256.
+Only videos that share a size with another video are hashed. Unique sizes
+cannot be confirmed by SHA-256.
 
-### Fase 6 — Agrupar duplicados
+### Phase 6 — Group duplicates
 
 ```bash
 bbcp group --reset
 ```
 
-### Fase 7 — Fechas
+### Phase 7 — Dates
 
 ```bash
 bbcp dates
 ```
 
-Debe ejecutarse **después** de `group`.
+Must run **after** `group`.
 
-### Fase 8 — Plan
+### Phase 8 — Plan
 
 ```bash
 bbcp plan
 ```
 
-Genera `keep`, `keep_distinct`, `delete`, `upgrade`, `import`,
-`external_covered`, `external_dup` en la BD. No toca el disco.
+Produces `keep`, `keep_distinct`, `delete`, `upgrade`, `import`,
+`external_covered`, `external_dup` in the database. It does not touch the disk.
 
-### Fase 9 — Verificación
+### Phase 9 — Verification
 
 ```bash
 bbcp verify --workers 8
 ```
 
-Convierte en `keep_distinct` los borrados cuya MAD supera el umbral o que no se
-pueden decodificar.
+Turns deletions whose MAD exceeds the threshold (or whose images cannot be
+decoded) into `keep_distinct`.
 
-### Fase 10 — Actualizar e importar (aditivo)
+### Phase 10 — Upgrade and import (additive)
 
 ```bash
 bbcp apply                                      # dry run
 bbcp apply --execute --only upgrade,import
 ```
 
-* Copia atómica: temporal en el mismo directorio, `fsync`, `os.replace`.
-* Verifica SHA-256 origen/destino.
-* El archivo antiguo del destino se mueve a
-  `quarantine/<fecha>/upgrade/album/`.
-* Journal reanudable en `.bbcp/logs/apply-<fecha>.tsv`.
-* La base de datos se actualiza: un `import` pasa a apuntar a su ruta en el
-  álbum, y una fila movida a cuarentena o borrada desaparece del inventario.
+* Atomic copy: temp file in the same directory, `fsync`, `os.replace`.
+* SHA-256 of source and destination is verified.
+* The old target file moves to `quarantine/<date>/upgrade/album/`.
+* Resumable journal in `.bbcp/logs/apply-<date>.tsv`.
+* The database is updated: an `import` row points at its album path, and a row
+  moved to quarantine or unlinked disappears from the inventory.
 
-### Fase 11 — Borrar duplicados (a cuarentena)
+### Phase 11 — Delete duplicates (to quarantine)
 
 ```bash
 bbcp apply --execute --only delete --album-remove quarantine --workers 32
 ```
 
-Renombrados en paralelo a `quarantine/<fecha>/album/<ruta relativa>`. No borra.
+Parallel renames to `quarantine/<date>/album/<relative path>`. Nothing is
+unlinked.
 
-### Fase 12 — Informe
+### Phase 12 — Report
 
 ```bash
 bbcp report
 ```
 
-### Fase 13 — Limpiar raíces externas
+### Phase 13 — Clean external roots
 
-Antes de borrar media, **archivar los JSON** de metadatos:
+Before deleting media, **archive the JSON metadata**:
 
 ```bash
 mkdir -p .bbcp/metadata-archive
-ROOT=/ruta/Takeout/Google\ Fotos
+ROOT=/path/Takeout/Google\ Fotos
 find "$ROOT" -type f -name '*.json' -printf '%P\0' \
   | tar -C "$ROOT" --null -T - -czf ".bbcp/metadata-archive/takeout.tar.gz.part"
 gzip -t .bbcp/metadata-archive/takeout.tar.gz.part \
@@ -295,220 +291,215 @@ gzip -t .bbcp/metadata-archive/takeout.tar.gz.part \
         .bbcp/metadata-archive/takeout.tar.gz
 ```
 
-Después, purgar solo los `external_covered` (verificando que la copia del
-álbum existe):
+Then purge only `external_covered` items (checking that the album copy exists):
 
 ```bash
 bbcp apply --only external_covered --external-remove quarantine
 bbcp apply --execute --only external_covered --external-remove quarantine
 ```
 
-Y los `external_dup`:
+And `external_dup` items:
 
 ```bash
 bbcp apply --execute --only external_dup --external-remove quarantine
 ```
 
-`unlink` libera espacio de inmediato pero es irreversible. Úsalo solo con
-backup y confirmación.
+`unlink` frees space immediately but is irreversible. Use it only with a backup
+and explicit confirmation.
 
-### Fase 14 — Papelera digiKam (`.dtrash`)
+### Phase 14 — digiKam trash (`.dtrash`)
 
-1. Añadir `.dtrash/files` como raíz `source` (label `album-dtrash`).
+1. Add `.dtrash/files` as a `source` root (label `album-dtrash`).
 2. `bbcp scan --root album-dtrash`.
 3. `bbcp fingerprint`, `bbcp hash`, `bbcp group --reset`, `bbcp plan`.
-4. Borrar **solo** los duplicados que tengan copia exacta en el álbum:
+4. Delete **only** duplicates that have an exact copy in the album:
    `bbcp apply --execute --only external_covered --external-remove quarantine`.
-5. Conservar el resto y revisarlo a mano.
+5. Keep the rest and review manually.
 
-### Fase 15 — Raíces extra (TODO, Sync-DELETE, Drive-DELETE…)
+### Phase 15 — Extra roots (TODO, Sync-DELETE, Drive-DELETE…)
 
-Mismo pipeline (`scan → probe → fingerprint → hash → group → dates → plan`) y
-después:
+Same pipeline (`scan → probe → fingerprint → hash → group → dates → plan`),
+then:
 
 ```bash
 bbcp plan
-# categorías:
-#  album_dup   -> external_covered (borrar)
-#  album_better-> upgrade (incorporar antes de borrar)
-#  root_dup    -> external_dup (conservar la mejor)
-#  unique      -> import / stage
-#  other       -> no tocar
+# categories:
+#  album_dup    -> external_covered (delete)
+#  album_better -> upgrade (import before deleting)
+#  root_dup     -> external_dup (keep the best)
+#  unique       -> import / stage
+#  other        -> do not touch
 bbcp apply --execute --only upgrade,import
 bbcp stage --execute
 bbcp apply --execute --only import
 bbcp apply --execute --only external_covered,external_dup --external-remove quarantine
 ```
 
-### Fase 16 — Lotes de Google Fotos
+### Phase 16 — Google Photos batches
 
 ```bash
-bbcp plan                 # google usa el plan
+bbcp plan                 # google uses the plan
 bbcp google
 ```
 
-Salidas:
+Outputs:
 
-* `google_delete_candidates.tsv` — ítems con copia segura en el álbum.
-* `google_batches/batch_NNN.tsv` — trozos de `google.batch_size`.
+* `google_delete_candidates.tsv` — items with a safe copy in the album.
+* `google_batches/batch_NNN.tsv` — chunks of `google.batch_size`.
 
-Estrategia para bajar de ~148 GB a ~50 GB: revisar el uso real de la cuenta,
-empezar por los vídeos y los más pesados, y borrar por tandas comprobando el
-espacio después de cada una.
+Strategy to go from ~148 GB to ~50 GB: check the account's real usage, start
+with videos and the heaviest items, and delete in batches, checking free space
+after each one.
 
-### Fase 17 — Stage de revisión
+### Phase 17 — Review staging
 
 ```bash
 bbcp stage                       # dry run
-bbcp stage --execute             # mover a .bbcp/staging/<fecha>
+bbcp stage --execute             # move to .bbcp/staging/<date>
 bbcp stage --list
 bbcp apply --execute --only import
 ```
 
-El stage detecta duplicados **entre** raíces: la misma foto puede estar en TODO
-y en Sync-DELETE. `group` ya los une; el stage solo mueve los `import`.
+Staging exposes duplicates **between** roots: the same photo may be in TODO and
+in Sync-DELETE. `group` already merges them; staging only moves `import` rows.
 
-### Fase 18 — Rescan final
+### Phase 18 — Final rescan
 
 ```bash
 bbcp scan --prune
 bbcp status
 bbcp report
-du -sh /ruta/Album .bbcp/quarantine
+du -sh /path/Album .bbcp/quarantine
 ```
 
-## 5. Trampas conocidas
+## 5. Known pitfalls
 
-### 9p / rendimiento
+### 9p / performance
 
-* SQLite en 9p es lentísimo: la DB va en ext4.
-* `fsync` por archivo mata el rendimiento: journal en lote (cada 100 líneas) y
-  renames/deletes en paralelo.
-* `find | tar` de miles de JSON pequeños es lento; escribe a `.part` y renombra
-  solo tras `gzip -t`.
+* SQLite on 9p is extremely slow: keep the database on ext4.
+* Per-file `fsync` kills throughput: batch the journal (every 100 lines) and
+  parallelize renames/deletes.
+* `find | tar` over thousands of small JSON files is slow; write to `.part` and
+  rename only after `gzip -t`.
 
 ### Fingerprints
 
-* Hashes degenerados (todo ceros / un bit) provocan colisiones masivas. Filtro
+* Degenerate hashes (all zeros / one bit) cause massive collisions. Filter with
   `popcount ≥ 12`.
-* El cierre transitivo une ráfagas y fotos distintas. **Nunca** usarlo.
-* Diferencias de resolución entre copias de la misma foto son normales; el
-  aspect ratio debe coincidir.
+* Transitive closure merges bursts and different photos. **Never** use it.
+* Resolution differences between copies of the same photo are normal; the
+  aspect ratio must match.
 
 ### SQLite
 
-* Una conexión no se comparte entre hilos: resuelve rutas/IDs en el hilo
-  principal antes de paralelizar.
-* Tras mover/borrar archivos, la BD queda obsoleta: reescanea o usa el journal
-  como fuente de verdad.
+* A connection cannot be shared between threads: resolve paths/IDs on the main
+  thread before parallelizing.
+* After moving or deleting files, the database can become stale: rescan or use
+  the journal as the source of truth.
 
-### Vídeos
+### Videos
 
-* Mismo tamaño no implica mismo contenido: confirmar con SHA-256.
-* Misma duración+resolución **no** implica mismo vídeo: verificar por
-  fotograma.
-* Los `.nsp`, ROMs y documentos no son fotos/vídeos: no tocarlos.
+* Same size does not imply same content: confirm with SHA-256.
+* Same duration + resolution does **not** imply same video: verify by frame.
+* `.nsp`, ROMs and documents are not photos/videos: do not touch them.
 
-### Fechas
+### Dates
 
-* `1970-01-01` y `1980-01-01` son centinelas.
-* La carpeta `2026/2026-01-05` es un volcado de importación.
-* El puente de sidecars vía copia exacta recupera miles de fechas perdidas.
+* `1970-01-01` and `1980-01-01` are sentinels.
+* The folder `2026/2026-01-05` is an import dump.
+* The sidecar bridge through exact copies recovers thousands of lost dates.
 
-### Operaciones
+### Operations
 
-* Deduplicar **por destino** en los upgrades: dos orígenes pueden apuntar al
-  mismo archivo del álbum y pisarse. `apply` aborta si el destino existe con
-  contenido distinto.
-* Verificar SHA-256 en cada copia; nunca confiar solo en el tamaño.
-* Mover a cuarentena, no borrar, hasta la verificación final.
-* `du -sb` incluye `.dtrash`, `Thumbs.db` y `.tmp`; la suma de la BD puede no
-  coincidir.
+* Deduplicate **by destination** in upgrades: two sources may point at the same
+  album file and overwrite each other. `apply` aborts if the destination exists
+  with different content.
+* Verify SHA-256 on every copy; never trust size alone.
+* Move to quarantine, do not delete, until final verification.
+* `du -sb` includes `.dtrash`, `Thumbs.db` and `.tmp`; database totals may not
+  match.
 
-## 6. Cifras de referencia (una ejecución real)
+## 6. Reference numbers (one real run)
 
-| Concepto | Valor |
+| Concept | Value |
 |---|---|
-| Imágenes inventariadas | ~317.000 |
-| Vídeos | ~16.700 |
-| Álbum inicial | 389,9 GB (138.490 archivos) |
-| Duplicados del álbum a cuarentena | 42.729 (65,2 GB) |
-| Imágenes confirmadas por MAD ≤ 1,5 | 41.327 (22,98 GB) |
-| Conservadas por MAD > 1,5 | 1.039 |
-| Reemplazos de calidad | 311 |
-| Importaciones al álbum | 3.425 |
-| Externos cubiertos | 260,34 GB |
-| `.dtrash` confirmado | 31.462 (22,22 GB) |
-| Raíces extra procesadas | 339 GB |
-| Duplicados extra borrados | 130.994 (275,96 GB) |
-| Stage de únicos | 17.783 (45,69 GB) |
-| Google candidatos seguros | 86.485 (125,71 GB) |
-| Google lote heavy | 9.930 (100 GB) |
-| Google solo vídeos | 2.386 (83,60 GB) |
+| Images inventoried | ~317,000 |
+| Videos | ~16,700 |
+| Initial album | 389.9 GB (138,490 files) |
+| Album duplicates quarantined | 42,729 (65.2 GB) |
+| Images confirmed by MAD ≤ 1.5 | 41,327 (22.98 GB) |
+| Kept because MAD > 1.5 | 1,039 |
+| Quality replacements | 311 |
+| Imports into the album | 3,425 |
+| External items covered | 260.34 GB |
+| `.dtrash` confirmed | 31,462 (22.22 GB) |
+| Extra roots processed | 339 GB |
+| Extra duplicates deleted | 130,994 (275.96 GB) |
+| Unique staging | 17,783 (45.69 GB) |
+| Safe Google candidates | 86,485 (125.71 GB) |
+| Google heavy batch | 9,930 (100 GB) |
+| Google videos only | 2,386 (83.60 GB) |
 
-Son referencias, no garantías: los números dependen de cada biblioteca.
+These are references, not guarantees: numbers depend on each library.
 
 ## 7. Rollback
 
-Cada journal tiene columnas `source`, `target`, `backup`, `status`.
+Every journal has `source`, `target`, `backup`, `status` columns.
 
-* Duplicados del álbum:
-  `quarantine/<fecha>/album/<ruta relativa>`.
-* Upgrades: `quarantine/<fecha>/upgrade/album/<ruta relativa>`.
-* Fuentes: `quarantine/<fecha>/source/<raíz>/<ruta relativa>`.
-* Stage: mover de vuelta desde `.bbcp/staging/<fecha>/<raíz>/<ruta>` y
-  reescanear.
+* Album duplicates: `quarantine/<date>/album/<relative path>`.
+* Upgrades: `quarantine/<date>/upgrade/album/<relative path>`.
+* Sources: `quarantine/<date>/source/<root>/<relative path>`.
+* Staging: move back from `.bbcp/staging/<date>/<root>/<path>` and rescan.
 
 ```bash
 mv ".bbcp/quarantine/2026-11-08/album/2024/2024-05-01/x.jpg" \
    "/mnt/b/ownCloud/Album/2024/2024-05-01/x.jpg"
 ```
 
-## 8. Reglas de seguridad para el agente
+## 8. Safety rules for the agent
 
-1. Antes de borrar, comprobar que la referencia del álbum existe.
-2. No borrar `external_*` ni `keep` sin autorización explícita.
-3. No borrar en Google ítems sin `album_ref` verificado.
-4. No tocar documentos ni ROMs.
-5. No reiniciar la sincronización hasta que el usuario lo pida.
-6. Ante duda, conservar y marcar para revisión.
-7. Escribir siempre journal y manifiesto antes de ejecutar.
-8. Simular y revisar el resumen antes de ejecutar.
+1. Before deleting, check that the album reference exists.
+2. Do not delete `external_*` or `keep` without explicit authorization.
+3. Do not delete Google items without a verified `album_ref`.
+4. Do not touch documents or ROMs.
+5. Do not restart sync until the user asks.
+6. When in doubt, keep the file and mark it for review.
+7. Always write a journal and manifest before executing.
+8. Simulate and review the summary before executing.
 
-## 9. Checklist rápida
+## 9. Quick checklist
 
-- [ ] Sincronización parada.
-- [ ] BD en ext4 y en WAL.
-- [ ] Raíces registradas y escaneadas.
-- [ ] Sidecars parseados.
-- [ ] Vídeos con ffprobe; imágenes con fingerprint.
-- [ ] SHA-256 de vídeos candidatos.
-- [ ] Grupos exactos (sin transitividad, con filtros).
-- [ ] Fechas rellenadas (sin centinelas).
-- [ ] Plan generado y revisado.
-- [ ] MAD verificado.
-- [ ] Upgrades/imports ejecutados con SHA-256.
-- [ ] Duplicados a cuarentena.
-- [ ] JSON archivados antes de borrar externos.
-- [ ] `.dtrash` verificado por contenido.
-- [ ] Raíces extra clasificadas; mejores incorporadas; únicos en stage.
-- [ ] Lotes de Google generados y revisados.
-- [ ] Informe y journals guardados.
-- [ ] Rescan final.
+- [ ] Sync stopped.
+- [ ] Database on ext4 and in WAL mode.
+- [ ] Roots registered and scanned.
+- [ ] Sidecars parsed.
+- [ ] Videos probed; images fingerprinted.
+- [ ] SHA-256 for candidate videos.
+- [ ] Exact groups (no transitivity, with guards).
+- [ ] Dates filled (no sentinels).
+- [ ] Plan generated and reviewed.
+- [ ] MAD verified.
+- [ ] Upgrades/imports executed with SHA-256.
+- [ ] Duplicates in quarantine.
+- [ ] JSON archived before deleting externals.
+- [ ] `.dtrash` verified by content.
+- [ ] Extra roots classified; better copies imported; uniques staged.
+- [ ] Google batches generated and reviewed.
+- [ ] Report and journals saved.
+- [ ] Final rescan.
 
-## 10. Glosario
+## 10. Glossary
 
-* **pHash/dHash/aHash** — hashes perceptuales de 64 bits; robustos a
-  recompresión y cambio de tamaño.
-* **MAD** — diferencia absoluta media entre miniaturas; mide si dos imágenes
-  son el mismo contenido.
-* **Approx** — vídeo con misma duración y resolución pero distinto SHA-256;
-  requiere verificación por fotograma.
-* **Stage** — carpeta intermedia con los archivos únicos para revisarlos antes
-  de importarlos al álbum.
-* **Cuarentena** — destino reversible de los borrados; mismo sistema de
-  archivos.
-* **Journal** — registro TSV de cada operación, con estado y rutas; permite
-  reanudar.
-* **Manifiesto** — listado TSV del plan (qué se conserva, borra, importa o
-  actualiza).
+* **pHash/dHash/aHash** — 64-bit perceptual hashes; robust to recompression
+  and resizing.
+* **MAD** — mean absolute difference between thumbnails; measures whether two
+  images are the same content.
+* **Approx** — video with the same duration and resolution but a different
+  SHA-256; requires frame verification.
+* **Staging** — intermediate folder with unique files, reviewed before they are
+  imported into the album.
+* **Quarantine** — reversible destination for deletions; same filesystem.
+* **Journal** — TSV record of every operation, with status and paths; allows
+  resuming.
+* **Manifest** — TSV listing of the plan (what is kept, deleted, imported or
+  upgraded).

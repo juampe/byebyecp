@@ -1,53 +1,53 @@
 # AGENTS.md
 
-Instrucciones para agentes (humanos o IA) que trabajen **en este repositorio** o
-que lo usen para consolidar una biblioteca real. La guía operativa completa
-está en [`docs/playbook.md`](docs/playbook.md); el skill canónico para OpenCode
-está en [`.opencode/skills/bye-bye-cloud-photos/SKILL.md`](.opencode/skills/bye-bye-cloud-photos/SKILL.md).
+Instructions for agents (human or AI) working **on this repository** or using
+it to consolidate a real photo library. The full operational guide is in
+[`docs/playbook.md`](docs/playbook.md); the canonical OpenCode skill is in
+[`.opencode/skills/bye-bye-cloud-photos/SKILL.md`](.opencode/skills/bye-bye-cloud-photos/SKILL.md).
 
-## 1. Qué es este proyecto
+## 1. What this project is
 
-`bbcp` (Bye Bye Cloud Photos) es un CLI en Rust que:
+`bbcp` (Bye Bye Cloud Photos) is a Rust CLI that:
 
-1. inventaría una o varias raíces (álbum + exports de Takeout + volcados
-   antiguos + papeleras) en SQLite;
-2. agrupa copias exactas por contenido (hashes perceptuales para imágenes,
-   SHA-256 para vídeos);
-3. decide qué copia conservar, qué importar, qué actualizar y qué mover a
-   cuarentena;
-4. verifica por píxeles/fotogramas antes de borrar;
-5. ejecuta copias atómicas y deja journal reanudable;
-6. prepara lotes de borrado en Google Fotos solo para ítems con copia local
-   verificada.
+1. inventories one or more roots (album + Takeout exports + old dumps +
+   recycle bins) into SQLite;
+2. groups exact copies by content (perceptual hashes for images, SHA-256 for
+   videos);
+3. decides which copy to keep, what to import, what to upgrade and what to
+   move to quarantine;
+4. verifies by pixels/frames before deleting;
+5. performs atomic, checksummed copies and keeps a resumable journal;
+6. builds Google Photos deletion batches only for items with a verified local
+   copy.
 
-El objetivo no es "borrar rápido", sino **poder demostrar que no se perdió
-nada**.
+The goal is not "delete fast" but **being able to prove nothing was lost**.
 
-## 2. Invariantes que no se negocian
+## 2. Non-negotiable invariants
 
-Cualquier cambio en el código debe preservarlas:
+Any code change must preserve them:
 
-1. **Nada se borra sin una copia verificada.** Un `delete`/`external_covered`
-   solo existe si el grupo tiene un miembro del álbum que sobrevive al plan.
-2. **Todo es reversible por defecto.** Los duplicados del álbum se mueven a
-   cuarentena; nunca se hace `unlink` salvo petición explícita.
-3. **Las escrituras son atómicas.** Temporal en el directorio destino,
-   `fsync`, SHA-256 origen/destino, `rename`.
-4. **Las acciones destructivas son opt-in.** `apply` es dry run sin
-   `--execute`. `external_covered`/`external_dup` no están en `--only` por
-   defecto.
-5. **El álbum no es automáticamente la mejor copia.** El ranking se basa en
-   píxeles, bitrate/tamaño, antigüedad y tamaño.
-6. **Sin cierre transitivo.** Un grupo es la terna exacta de hashes; encadenar
-   similitudes une ráfagas y fotos distintas.
-7. **Ante la duda, conservar.** Si la verificación falla o el archivo no se
-   puede decodificar, la acción se convierte en `keep_distinct`.
-8. **La base de datos no vive en 9p/NFS/FUSE.** SQLite + latencia alta +
-   locking poco fiable es una combinación peligrosa.
+1. **Nothing is removed without a verified copy.** A `delete` or
+   `external_covered` action exists only when the group has an album member
+   that survives the plan.
+2. **Everything is reversible by default.** Album duplicates move to
+   quarantine; `unlink` is never used unless explicitly requested.
+3. **Writes are atomic.** Temp file in the destination directory, `fsync`,
+   SHA-256 of source and destination, `rename`.
+4. **Destructive actions are opt-in.** `apply` is a dry run without
+   `--execute`. `external_covered`/`external_dup` are not in the default
+   `--only` set.
+5. **The album is not automatically the best copy.** Ranking is based on
+   pixels, bitrate/size, age and file size.
+6. **No transitive closure.** A group is the exact hash triple; chaining
+   similar images merges bursts and different photos.
+7. **When in doubt, keep.** If verification fails or a file cannot be decoded,
+   the action becomes `keep_distinct`.
+8. **The database never lives on 9p/NFS/FUSE.** SQLite plus high latency plus
+   unreliable locking is a dangerous combination.
 
-Si una tarea parece requerir romper un invariante, para y pregunta.
+If a task seems to require breaking an invariant, stop and ask.
 
-## 3. Comandos de desarrollo
+## 3. Development commands
 
 ```bash
 cargo fmt --all
@@ -56,10 +56,9 @@ cargo test --workspace
 cargo build --release
 ```
 
-El CI ejecuta exactamente eso en Linux y macOS. No se aceptan warnings de
-clippy.
+CI runs exactly that on Linux and macOS. Clippy warnings are not accepted.
 
-Prueba manual mínima (no requiere biblioteca real):
+Minimal manual test (no real library required):
 
 ```bash
 cargo run -q -p bbcp-cli -- init --album /tmp/bbcp-demo/Album --force
@@ -70,101 +69,102 @@ cargo run -q -p bbcp-cli -- group --reset
 cargo run -q -p bbcp-cli -- plan
 ```
 
-Para generar medios de prueba: `ffmpeg -f lavfi -i testsrc=size=320x240 -t 2 out.mp4`
-y cualquier JPEG del sistema.
+To generate test media: `ffmpeg -f lavfi -i testsrc=size=320x240 -t 2 out.mp4`
+and any JPEG already on the system.
 
-## 4. Mapa del código
+## 4. Code map
 
-| Archivo | Responsabilidad |
+| File | Responsibility |
 |---|---|
-| `crates/bbcp-core/src/model.rs` | `FileRow`, `Action`, `MediaKind`, extensión → tipo |
-| `config.rs` | `bbcp.toml`, valores por defecto, validación, config de ejemplo |
-| `store.rs` | Esquema SQLite, upserts, plan, grupos, sidecars |
-| `walk.rs` | Recorrido de raíces, filtros de basura, solapamientos |
-| `hash.rs` | SHA-256 en streaming |
-| `imagehash.rs` | pHash/dHash/aHash, MAD, fotogramas de vídeo |
-| `video.rs` | `ffprobe` (resolución con rotación, duración, bitrate) |
-| `group.rs` | Grupos exactos de imagen y vídeo |
-| `dates.rs` | Sidecars, puente entre copias, EXIF, nombre, carpeta |
-| `quality.rs` | Ranking y "mejora material" |
-| `plan.rs` | Construcción de `plan_actions` |
-| `verify.rs` | MAD antes de borrar; `compare` |
-| `apply.rs` | Copias atómicas, cuarentena, journal |
-| `stage.rs` | Stage de únicos y actualización de la BD |
-| `google.rs` | Candidatos y lotes de borrado |
-| `report.rs` | Informe Markdown |
-| `lib.rs` | Módulos y `doctor` |
-| `crates/bbcp-cli/src/main.rs` | Subcomandos y salida por consola |
+| `crates/bbcp-core/src/model.rs` | `FileRow`, `Action`, `MediaKind`, extension → type |
+| `config.rs` | `bbcp.toml`, defaults, validation, example config |
+| `store.rs` | SQLite schema, upserts, plan, groups, sidecars, relocation |
+| `walk.rs` | Root traversal, junk filters, overlap checks |
+| `hash.rs` | Streaming SHA-256 |
+| `imagehash.rs` | pHash/dHash/aHash, MAD, video frame extraction |
+| `video.rs` | `ffprobe` (rotation-aware resolution, duration, bitrate) |
+| `group.rs` | Exact image and video groups |
+| `dates.rs` | Sidecars, copy bridge, EXIF, filename, folder |
+| `quality.rs` | Ranking and material-upgrade rule |
+| `plan.rs` | Building `plan_actions` |
+| `verify.rs` | MAD before deletion; `compare` |
+| `apply.rs` | Atomic copies, quarantine, journal |
+| `stage.rs` | Staging of unique files and inventory update |
+| `google.rs` | Deletion candidates and batches |
+| `report.rs` | Markdown report |
+| `lib.rs` | Modules and `doctor` |
+| `crates/bbcp-cli/src/main.rs` | Subcommands and console output |
 
-Reglas de estilo:
+Style rules:
 
-* Rust 2021, `anyhow::Result` en la librería, mensajes de error en español
-  (el CLI los imprime tal cual).
-* Nada de `unwrap()`/`expect()` fuera de tests y de invariantes demostrados
-  (por ejemplo un grupo no vacío).
-* Las rutas del usuario no se asumen: siempre `strip_prefix` con fallback.
-* Los cambios de esquema van en `SCHEMA` con `CREATE TABLE IF NOT EXISTS`; si
-  cambia una columna de una tabla existente, documenta la migración.
+* Rust 2021, `anyhow::Result` in the library, user-facing error messages in
+  Spanish (the CLI prints them verbatim).
+* No `unwrap()`/`expect()` outside tests and proven invariants (for example a
+  non-empty group).
+* Never assume user paths: always `strip_prefix` with a fallback.
+* Schema changes go into `SCHEMA` with `CREATE TABLE IF NOT EXISTS`; if a
+  column of an existing table changes, document the migration.
 
-## 5. Flujo al modificar el motor
+## 5. Workflow when changing the engine
 
-1. Lee `docs/decisions.md` para entender por qué el diseño es así.
-2. Cambia el módulo y añade una prueba en `crates/bbcp-core/tests/core.rs`
-   (sin ffmpeg) o una prueba manual documentada.
-3. Ejecuta `cargo fmt`, `clippy -D warnings` y `cargo test`.
-4. Prueba el pipeline completo en `/tmp` con imágenes sintéticas **antes** de
-   tocar una biblioteca real.
-5. Si el cambio afecta a seguridad (borrado, cuarentena, journal, referencias),
-   actualiza `docs/safety.md` y `AGENTS.md`.
+1. Read `docs/decisions.md` to understand why the design is what it is.
+2. Change the module and add a test in
+   `crates/bbcp-core/tests/core.rs` (no ffmpeg) or a documented manual test.
+3. Run `cargo fmt`, `clippy -D warnings` and `cargo test`.
+4. Run the full pipeline in `/tmp` with synthetic images **before** touching a
+   real library.
+5. If the change affects safety (deletion, quarantine, journal, references),
+   update `docs/safety.md` and `AGENTS.md`.
 
-## 6. Flujo al operar sobre una biblioteca real
+## 6. Workflow on a real library
 
-1. **Preflight**: `./scripts/preflight.sh`, `bbcp doctor`, ownCloud/Syncthing
-   parados.
-2. **Inventario**: `scan`, `sidecars`, `probe`, `fingerprint`, `hash`, `group`,
+1. **Preflight**: `./scripts/preflight.sh`, `bbcp doctor`, stop
+   ownCloud/Syncthing.
+2. **Inventory**: `scan`, `sidecars`, `probe`, `fingerprint`, `hash`, `group`,
    `dates`.
-3. **Plan**: `plan`; revisa conteos y bytes. Si algo no cuadra, corrige la
-   configuración y repite `plan`.
-4. **Verificación**: `verify`.
-5. **Dry run**: `apply` y `apply --only ...` para cada subconjunto.
-6. **Ejecución aditiva**: `apply --execute --only upgrade,import`.
-7. **Cuarentena**: `apply --execute --only delete --album-remove quarantine`.
-8. **Revisión del stage**: `stage`, revisar, `apply --execute --only import`.
-9. **Externos**: archivar JSON, después `--only external_covered`,
-   `--only external_dup` con `--external-remove quarantine` o `unlink`.
-10. **Google**: `google`, revisar `google_delete_candidates.tsv`, borrar por
-    lotes.
-11. **Cierre**: `report`, rescan, comprobar totales y espacio.
+3. **Plan**: `plan`; review counts and bytes. If something looks wrong, fix
+   the configuration and run `plan` again.
+4. **Verification**: `verify`.
+5. **Dry run**: `apply` and `apply --only ...` for each subset.
+6. **Additive execution**: `apply --execute --only upgrade,import`.
+7. **Quarantine**: `apply --execute --only delete --album-remove quarantine`.
+8. **Stage review**: `stage`, review, `apply --execute --only import`.
+9. **External roots**: archive the JSON sidecars, then
+   `--only external_covered` and `--only external_dup` with
+   `--external-remove quarantine` or `unlink`.
+10. **Google**: `google`, review `google_delete_candidates.tsv`, delete in
+    batches.
+11. **Close**: `report`, rescan, check totals and free space.
 
-Nunca ejecutes los pasos 6–9 sin mostrar antes al usuario el resumen del dry
-run y obtener confirmación explícita.
+Never run steps 6–9 without first showing the user the dry-run summary and
+getting explicit confirmation.
 
-## 7. Trampas conocidas
+## 7. Known pitfalls
 
-* **9p**: cada `stat`/`rename` es lento. Paraleliza y evita `fsync` por
-  archivo (el journal sincroniza cada 100 líneas).
-* **Hashes degenerados**: imágenes lisas producen hashes con pocos bits.
-  `min_popcount = 12` las excluye.
-* **Ráfagas**: dos frames pueden compartir la terna. La verificación MAD los
-  separa; no la omitas.
-* **Vídeos "approx"**: misma duración y resolución no implica mismo vídeo
-  (en una biblioteca real ~85 % eran distintos). Verifica por fotograma.
-* **Fechas centinela**: `1970-01-01` y `1980-01-01` no son fechas.
-* **Carpetas de volcado**: `2026/2026-01-05` es la fecha de importación;
-  configúrala en `import_dump_days`.
-* **Colisiones en cuarentena**: dos raíces pueden tener la misma ruta relativa.
-  Son errores, no algo que se deba pisar en silencio.
+* **9p**: every `stat`/`rename` is slow. Parallelize and avoid per-file
+  `fsync` (the journal syncs every 100 lines).
+* **Degenerate hashes**: flat images produce hashes with few set bits.
+  `min_popcount = 12` filters them out.
+* **Bursts**: two frames can share the hash triple. MAD verification separates
+  them; never skip it.
+* **"Approx" videos**: same duration and resolution does not mean the same
+  video (in one real library ~85% were different). Verify by frame.
+* **Sentinel dates**: `1970-01-01` and `1980-01-01` are not dates.
+* **Dump folders**: `2026/2026-01-05` is the import date; add it to
+  `import_dump_days`.
+* **Quarantine collisions**: two roots can share the same relative path. They
+  are errors, not something to overwrite silently.
 
-## 8. Documentación y skill
+## 8. Documentation and skill
 
-* `docs/playbook.md` — flujo operativo completo con cifras de referencia.
-* `docs/safety.md` — modelo de seguridad y modos de fallo.
-* `docs/decisions.md` — decisiones de diseño y alternativas descartadas.
-* `docs/google-takeout.md` — sidecars, fechas y lotes de Google.
-* `.opencode/skills/bye-bye-cloud-photos/SKILL.md` — skill canónico de
-  OpenCode. Si cambias el flujo, actualízalo en el mismo commit.
+* `docs/playbook.md` — full operational flow with reference numbers.
+* `docs/safety.md` — safety model and failure modes.
+* `docs/decisions.md` — design decisions and rejected alternatives.
+* `docs/google-takeout.md` — sidecars, dates and Google batches.
+* `.opencode/skills/bye-bye-cloud-photos/SKILL.md` — canonical OpenCode skill.
+  If you change the flow, update it in the same commit.
 
-## 9. Licencia
+## 9. License
 
-GPL-3.0-only. Al reutilizar código de otro proyecto GPL, conserva la
-atribución en `THIRD_PARTY.md`.
+GPL-3.0-only. When reusing code from another GPL project, keep the attribution
+in `THIRD_PARTY.md`.
