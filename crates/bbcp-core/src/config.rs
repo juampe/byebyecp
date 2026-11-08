@@ -19,6 +19,9 @@ pub struct Config {
     pub rules: Rules,
     #[serde(default)]
     pub google: Google,
+    /// Preconditions for destructive runs (independent backups).
+    #[serde(default)]
+    pub safety: Safety,
     /// Directory that receives the `.json` archives before external media is
     /// purged, so Google ids and metadata survive the cleanup.
     #[serde(default = "default_metadata_archive")]
@@ -119,6 +122,18 @@ impl Default for Google {
     }
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Safety {
+    /// Independent copies of the album, checked before any destructive run.
+    /// At least two are required; see [`crate::safety::MIN_BACKUPS`].
+    #[serde(default)]
+    pub backups: Vec<PathBuf>,
+    /// Explicitly accept running without verified backups. This is reckless and
+    /// only exists so the user can make an informed decision.
+    #[serde(default)]
+    pub allow_without_backups: bool,
+}
+
 fn default_db() -> PathBuf {
     PathBuf::from(".bbcp/bbcp.db")
 }
@@ -186,6 +201,9 @@ impl Config {
         cfg.paths.logs = resolve(&base, &cfg.paths.logs);
         cfg.paths.manifests = resolve(&base, &cfg.paths.manifests);
         cfg.metadata_archive = resolve(&base, &cfg.metadata_archive);
+        for backup in &mut cfg.safety.backups {
+            *backup = resolve(&base, backup);
+        }
         for root in &mut cfg.roots {
             root.path = resolve(&base, &root.path);
         }
@@ -285,6 +303,17 @@ import_dump_days = []
 
 [google]
 batch_size = 1000
+
+[safety]
+# Al menos DOS copias de seguridad independientes del álbum, en otro disco y
+# fuera del álbum. `bbcp apply --execute` se niega a seguir si no están
+# configuradas y presentes. Descomenta y ajusta:
+# backups = ["/mnt/copia-1/Album", "/mnt/copia-2/Album"]
+backups = []
+
+# Si de verdad no tienes copias, ponlo a true y acepta el riesgo. No hay marcha
+# atrás: la cuarentena está en el mismo disco y no sustituye a un backup.
+allow_without_backups = false
 "#,
         album = album.display()
     )

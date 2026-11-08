@@ -39,6 +39,11 @@ Example layout (adapt the paths):
 | Metadata archive | `/mnt/b/PMM/metadata-archive` |
 | Review staging | `/mnt/b/PMM/staging-revision/<YYYY-MM-DD>` |
 | Configuration | `/home/juampe/Develop/byebyecp/bbcp.toml` |
+| Backup 1 (off-site) | `/mnt/backup-1/Album` |
+| Backup 2 (other disk) | `/mnt/backup-2/Album` |
+
+The two backups are declared in `[safety] backups` and verified by
+`bbcp doctor`. Without them, `apply --execute` refuses to run.
 
 Dependencies: `ffmpeg`, `ffprobe` and a local database. Nothing else.
 
@@ -168,6 +173,7 @@ Exclusions:
 ```bash
 ./scripts/preflight.sh
 bbcp doctor
+# two independent backups configured and present
 # ownCloud/Syncthing/Drive stopped
 df -h /mnt/b | tail -1
 sqlite3 .bbcp/bbcp.db "PRAGMA journal_mode;"   # wal
@@ -458,6 +464,8 @@ mv ".bbcp/quarantine/2026-11-08/album/2024/2024-05-01/x.jpg" \
 
 ## 8. Safety rules for the agent
 
+0. Two independent backups exist and `bbcp doctor` reports them as usable;
+   otherwise stop before any destructive step and show `DISCLAIMER.md`.
 1. Before deleting, check that the album reference exists.
 2. Do not delete `external_*` or `keep` without explicit authorization.
 3. Do not delete Google items without a verified `album_ref`.
@@ -466,6 +474,11 @@ mv ".bbcp/quarantine/2026-11-08/album/2024/2024-05-01/x.jpg" \
 6. When in doubt, keep the file and mark it for review.
 7. Always write a journal and manifest before executing.
 8. Simulate and review the summary before executing.
+9. Never enable `allow_without_backups` on the user's behalf.
+
+`bbcp` is provided as-is and the authors accept no liability for data loss. The
+operator owns the decision to delete; the agent owns reading the dry run
+correctly. See [`../DISCLAIMER.md`](../DISCLAIMER.md).
 
 ## 9. Quick checklist
 

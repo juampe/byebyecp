@@ -101,6 +101,48 @@ if [ -n "$album" ]; then
 fi
 
 echo
+echo "backups (two independent copies are required before apply --execute)"
+dev_of() { stat -c '%d' "$1" 2>/dev/null || stat -f '%d' "$1" 2>/dev/null; }
+allow_no_backup="$(sed -n 's/^[[:space:]]*allow_without_backups[[:space:]]*=[[:space:]]*\([A-Za-z]*\).*/\1/p' "$CONFIG" | head -1)"
+backup_list="$(sed -n 's/^[[:space:]]*backups[[:space:]]*=[[:space:]]*\[\(.*\)\].*/\1/p' "$CONFIG" | head -1)"
+usable=0
+while IFS= read -r b; do
+  [ -z "$b" ] && continue
+  b_path="$(resolve "$b")"
+  if [ ! -d "$b_path" ]; then
+    bad "backup missing or not a directory: $b_path"
+    continue
+  fi
+  if [ -n "${album_path:-}" ]; then
+    case "$b_path" in
+      "$album_path"|"$album_path"/*)
+        bad "backup is inside the album: $b_path"
+        continue
+        ;;
+    esac
+    a_dev="$(dev_of "$album_path")"
+    b_dev="$(dev_of "$b_path")"
+    if [ -n "$a_dev" ] && [ "$a_dev" = "$b_dev" ]; then
+      bad "backup is on the same filesystem as the album: $b_path"
+      continue
+    fi
+  fi
+  ok "backup: $b_path"
+  usable=$((usable + 1))
+done <<EOF
+$(printf '%s' "$backup_list" | grep -o '"[^"]*"' | tr -d '"')
+EOF
+if [ "$usable" -lt 2 ]; then
+  if [ "$allow_no_backup" = "true" ]; then
+    warn "fewer than 2 usable backups, but allow_without_backups = true"
+  else
+    bad "need at least 2 independent backups; set [safety] backups in $CONFIG"
+  fi
+else
+  ok "$usable independent backups"
+fi
+
+echo
 echo "roots"
 awk '
   function value(s) {

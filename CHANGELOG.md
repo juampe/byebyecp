@@ -4,6 +4,23 @@ All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `[safety] backups`: `apply --execute` now refuses to run unless two
+  independent, existing backups are configured outside the album and on a
+  different filesystem; `bbcp doctor` reports their state.
+- `DISCLAIMER.md`: warranty, liability and the two-backup requirement, linked
+  from the README and the agent documentation.
+- Repository icon (`assets/icon.png`) and a 1024×1024 social preview
+  (`assets/social-preview.png`).
+
+### Changed
+
+- The README, playbook, safety model, `AGENTS.md` and the OpenCode skill now
+  require confirmed backups before any destructive step.
+
 ## [0.1.0] - 2026-11-08
 
 Initial public release.

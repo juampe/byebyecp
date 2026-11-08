@@ -196,3 +196,31 @@ reproducible. Every rule needed to run the tool is in the repo.
 **Why.** Ideas and code patterns were reused from UMDF (GPL-3.0). Keeping the
 same license preserves compatibility and keeps the project honest about its
 provenance. See `THIRD_PARTY.md`.
+
+## D17 — Two independent backups are a hard precondition
+
+**Decision.** `apply --execute` refuses to run unless `[safety] backups` lists
+at least two existing directories: outside the album, on a different
+filesystem, and distinct from each other. `bbcp doctor` reports the same check.
+`allow_without_backups = true` is the only escape hatch and it must be set by
+the operator.
+
+**Why.** Quarantine is on the same disk as the album. It protects against a bad
+pattern in the plan, not against a dead disk, a mistaken `rm`, a sync client or
+a bug in `apply`. The tool cannot verify that a backup is restorable, but it can
+refuse to make the situation worse when there is no second copy.
+
+**Rejected.** A warning only: warnings are ignored exactly when they matter. A
+CLI flag: a flag can be copy-pasted from a tutorial, while a config entry forces
+the user to name two real paths.
+
+## D18 — As-is, no warranty, no liability
+
+**Decision.** Keep the GPL-3.0 warranty disclaimer, and state it in plain
+language in `DISCLAIMER.md` and in a warning box at the top of the README.
+
+**Why.** The tool deletes files. A user who skips the dry run and the backups
+must not be able to claim they were not warned, and the maintainers must not
+carry the consequences of a run they did not perform. The disclaimer also names
+the non-limitable cases (wilful misconduct, gross negligence, mandatory
+consumer rights) so it is honest rather than theatrical.

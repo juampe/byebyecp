@@ -73,3 +73,17 @@ import_dump_days = []
 [google]
 # Items per google_batches/batch_NNN.tsv file.
 batch_size = 1000
+
+# ---------------------------------------------------------------------------
+# Backup precondition (mandatory for destructive runs)
+# ---------------------------------------------------------------------------
+[safety]
+# At least TWO independent backups of the album, outside it and on another
+# filesystem. `bbcp apply --execute` refuses to run until they exist, and
+# `bbcp doctor` reports them. Quarantine is not a backup: it lives on the same
+# disk as the album.
+backups = ["/mnt/backup-1/Album", "/mnt/backup-2/Album"]
+
+# Only for people who understand the risk: skip the backup precondition.
+# There is no undo for this. Prefer configuring the backups above.
+allow_without_backups = false

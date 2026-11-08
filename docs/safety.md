@@ -17,6 +17,7 @@ verification layers and the failure modes the design defends against.
 | The plan becomes stale | files moved by other tools | reference existence re-checked at apply time; failures abort |
 | The same file is inventoried twice | nested roots | `check_overlap` rejects nested roots |
 | SQLite corrupts or stalls | DB on 9p/NFS | documented requirement: local filesystem, WAL |
+| Album and quarantine are lost together | failing disk, wrong command, sync client | two independent backups required before `apply --execute` |
 
 Explicit non-goals: defending against a malicious user with write access to the
 inventory, encrypting the quarantine, or syncing with the cloud provider's API.
@@ -41,7 +42,39 @@ Re-encoded videos are compared by an extracted frame (`pHash + dHash`, distance
 ≤ `frame_distance`). A distance above the threshold means different videos and
 nothing is removed.
 
-## 3. Irreversible operations
+## 3. Backups: the only real undo
+
+Quarantine makes a mistake reversible. It does not survive a dead disk, a bad
+`rm`, a sync client replicating the deletion, or a bug that removes the wrong
+tree. `bbcp` therefore treats backups as a precondition, not a suggestion.
+
+Before `apply --execute`, `[safety] backups` must list **at least two** usable
+locations:
+
+```toml
+[safety]
+backups = ["/mnt/backup-1/Album", "/mnt/backup-2/Album"]
+allow_without_backups = false
+```
+
+A location counts only when it:
+
+1. exists and is a directory;
+2. is outside the album (it cannot be inside it or contain it);
+3. is on a different filesystem than the album;
+4. is not a duplicate of another entry.
+
+`bbcp doctor` prints the same check. When it fails, `apply --execute` aborts
+with the reasons; the dry run still works.
+
+Rules the tool cannot enforce:
+
+* one copy should be **offline or off-site** (the 3-2-1 rule);
+* a sync folder is not a backup — deletion propagates;
+* test a restore before trusting the backup;
+* `allow_without_backups = true` is an explicit acceptance of total loss.
+
+## 4. Irreversible operations
 
 Only two commands can destroy data:
 
@@ -56,7 +89,7 @@ The quarantine lives on the same filesystem as the album, so moving a file into
 it is an atomic rename. If the quarantine is on another filesystem, `bbcp` falls
 back to copy + verify + remove.
 
-## 4. Journal and resume
+## 5. Journal and resume
 
 Every executed operation appends one line to
 `.bbcp/logs/apply-<YYYY-MM-DD>.tsv`:
@@ -78,7 +111,7 @@ ts  action  source  target  backup  bytes  status  error
 `stage` writes `.bbcp/logs/stage-<date>.tsv` with `file_id` and the new path,
 mirroring the database update.
 
-## 5. Failure recovery
+## 6. Failure recovery
 
 | Situation | What `bbcp` does | What to do |
 |---|---|---|
@@ -94,8 +127,10 @@ A non-zero exit code means at least one operation failed; the journal names the
 path and the reason. Nothing else is silently rolled back: already-completed
 operations stay, and the run can be repeated.
 
-## 6. Operational rules
+## 7. Operational rules
 
+0. Two independent backups exist, are outside the album and are on another
+   filesystem; `bbcp doctor` reports them as usable.
 1. Stop ownCloud/Syncthing/Drive before moving album files.
 2. Keep the database and quarantine on a local filesystem.
 3. Run `plan` and the dry-run `apply` and read the numbers.
@@ -105,7 +140,7 @@ operations stay, and the run can be repeated.
 7. Back up the album before the first real run if the data is irreplaceable.
 8. When in doubt, keep the file.
 
-## 7. Why quarantine instead of trash
+## 8. Why quarantine instead of trash
 
 Desktop trash implementations are per-user, may be on another filesystem and
 may be emptied automatically. A dedicated tree:
@@ -115,7 +150,7 @@ may be emptied automatically. A dedicated tree:
 * can be inspected and deleted by the user when they are confident;
 * is captured in the journal, so the database can be reconciled.
 
-## 8. Auditing a run
+## 9. Auditing a run
 
 ```bash
 # What did the plan propose?
